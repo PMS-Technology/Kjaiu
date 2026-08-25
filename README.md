@@ -119,4 +119,4 @@ MySQL 5.7 compatibility uses the native JSON type, the `utf8mb4_unicode_ci` coll
 
 ## License
 
-MIT
+Kjaiu is licensed under the [GNU General Public License version 3](LICENSE) only (`GPL-3.0-only`). Third-party dependencies remain subject to their respective licenses.

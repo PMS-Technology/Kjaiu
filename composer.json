@@ -4,7 +4,7 @@
     "type": "project",
     "description": "Kjaiu billing and finance system with IDCsmart Finance compatible APIs.",
     "keywords": ["laravel", "billing", "idcsmart", "finance"],
-    "license": "MIT",
+    "license": "GPL-3.0-only",
     "require": {
         "php": "^8.2",
         "php-64bit": "*",
