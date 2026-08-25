@@ -53,7 +53,7 @@ KJAIU_ADMIN_PASSWORD=replace-with-a-strong-password
 
 管理后台位于 `/admin`。数据填充器还会创建银行转账渠道和一组小型示例商品目录。
 
-首次生产发布前，必须在可信的 PHP/Composer 环境中解析依赖，并提交生成的 `composer.lock`。Laravel 应用骨架默认不包含该文件，生产服务器不得在部署期间解析浮动依赖版本范围。
+仓库中的 `composer.lock` 由发布工作流生成并审计。生产部署必须使用该锁文件安装依赖，或直接使用版本化部署包；不得在生产服务器解析浮动依赖版本范围。
 
 ## 开发
 

@@ -53,7 +53,7 @@ KJAIU_ADMIN_PASSWORD=replace-with-a-strong-password
 
 The administrator console is available at `/admin`. The seeder also creates a bank-transfer channel and a small example product catalog.
 
-Before the first production release, resolve dependencies in a trusted PHP/Composer environment and commit the generated `composer.lock`. Laravel's application skeleton does not include one, and production hosts must not resolve floating dependency ranges during deployment.
+The committed `composer.lock` is generated and audited in the release workflow. Production deployments must install from this lock file or use a versioned deployment archive; they must not resolve floating dependency ranges.
 
 ## Development
 

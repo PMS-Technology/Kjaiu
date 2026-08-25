@@ -109,6 +109,7 @@ jobs:
             docs \
             lang \
             public \
+            resources \
             routes \
             storage \
             vendor \
@@ -145,11 +146,16 @@ jobs:
 
           test -f "${verify}/${package}/vendor/autoload.php"
           test -f "${verify}/${package}/public/build/manifest.json"
+          test -f "${verify}/${package}/resources/views/auth/login.blade.php"
           test -f "${verify}/${package}/composer.lock"
           test ! -e "${verify}/${package}/.env"
           test ! -e "${verify}/${package}/node_modules"
           test ! -e "${verify}/${package}/tests"
-          php "${verify}/${package}/artisan" --version
+          (
+            cd "${verify}/${package}"
+            php artisan route:list
+            php artisan view:cache
+          )
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
