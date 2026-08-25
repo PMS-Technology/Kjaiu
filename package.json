@@ -6,7 +6,7 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "format:check": "prettier --check \"resources/**/*.{css,js}\" \"scripts/**/*.cjs\" \".github/**/*.yml\" \"docs/**/*.md\" \"README.md\"",
+        "format:check": "prettier --check \"resources/**/*.{css,js}\" \"scripts/**/*.cjs\" \".github/**/*.yml\" \"docs/**/*.md\" \"README*.md\"",
         "lint:php": "node scripts/lint-php.cjs"
     },
     "engines": {

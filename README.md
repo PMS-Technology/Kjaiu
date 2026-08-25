@@ -1,5 +1,7 @@
 # Kjaiu
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Kjaiu is a Laravel 12 billing and hosting operations system. It combines a responsive administration console with an IDCsmart Finance v1-compatible API subset for authentication, catalog browsing, cart checkout, invoices, credit, transactions, and service renewal.
 
 ## What Is Included
