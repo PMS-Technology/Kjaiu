@@ -4,9 +4,9 @@
 
 - Linux or another supported PHP host
 - 64-bit PHP 8.2 or newer and the extensions listed in `README.md`
-- Composer 2
+- Composer 2 when building from source
 - MySQL 5.7.8+ or 8.x using InnoDB and `utf8mb4`; CI covers 5.7.44 and 8.4
-- Node.js `^20.19.0` or `>=22.12.0` for asset builds
+- Node.js `^20.19.0` or `>=22.12.0` when building frontend assets from source
 - A TLS-enabled web server with the document root set to `public/`
 - A process supervisor for queue workers if asynchronous jobs are added
 - Cron or an equivalent scheduler
@@ -15,7 +15,16 @@ SQLite is suitable for fast local feature tests only. It does not validate Kjaiu
 
 ## Build And Release
 
-Use a new release directory and do not build over a live deployment:
+Versioned GitHub releases provide deployment archives in `.tar.gz` and `.zip` formats. They include locked production Composer dependencies and compiled Vite assets, so Composer, Node.js, and npm are not required on the production host. Download one archive together with `SHA256SUMS`, then verify it before extraction:
+
+```bash
+sha256sum --check SHA256SUMS
+tar -xzf kjaiu-VERSION.tar.gz
+```
+
+The release workflow builds these archives only from tags with a committed `composer.lock`. The automatically generated GitHub source archives are not deployment packages.
+
+To build from source instead, use a new release directory and do not build over a live deployment:
 
 ```bash
 test -f composer.lock

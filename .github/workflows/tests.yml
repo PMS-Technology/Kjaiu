@@ -2,6 +2,8 @@ name: Tests
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
 
 permissions:
@@ -44,7 +46,7 @@ jobs:
       DB_COLLATION: utf8mb4_unicode_ci
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -52,7 +54,7 @@ jobs:
           extensions: ctype, curl, dom, fileinfo, filter, mbstring, openssl, pdo_mysql, pdo_sqlite
           coverage: none
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: matrix.mysql == '8.4'
         with:
           node-version: "22"

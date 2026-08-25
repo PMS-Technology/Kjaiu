@@ -1,0 +1,273 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build deployment archives
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.package.outputs.package }}
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:dGVzdC1hcHAtS2V5LXRlc3QtYXBwLUtleS0xMjM0NTY=
+      KJAIU_JWT_SECRET: test-jwt-secret-test-jwt-secret-1234
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ":memory:"
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: ctype, curl, dom, fileinfo, filter, mbstring, openssl, pdo_mysql, pdo_sqlite
+          coverage: none
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install PHP dependencies
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* && ! -f composer.lock ]]; then
+            echo "Tagged release builds require a committed composer.lock." >&2
+            exit 1
+          fi
+
+          if [[ -f composer.lock ]]; then
+            composer install --no-interaction --prefer-dist
+          else
+            composer update --no-interaction --prefer-dist
+          fi
+
+          composer validate --strict
+
+      - name: Preserve resolved dependency lock
+        uses: actions/upload-artifact@v7
+        with:
+          name: composer-lock
+          path: composer.lock
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify source and build frontend
+        run: |
+          npm run lint:php
+          npm run format:check
+          npm run build
+          vendor/bin/phpunit --configuration phpunit.xml
+
+      - name: Install production PHP dependencies
+        run: |
+          rm -rf vendor
+          composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+          composer audit --no-dev
+          composer check-platform-reqs --no-dev
+          php artisan optimize:clear
+
+      - name: Create deployment archives
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME//\//-}"
+          package="kjaiu-${version}"
+          stage="release/${package}"
+          mkdir -p "${stage}" dist
+
+          cp -a \
+            .env.example \
+            LICENSE \
+            README.md \
+            README.zh-CN.md \
+            app \
+            artisan \
+            bootstrap \
+            composer.json \
+            composer.lock \
+            config \
+            database \
+            docs \
+            lang \
+            public \
+            routes \
+            storage \
+            vendor \
+            "${stage}/"
+
+          printf '%s\n' "${GITHUB_REF_NAME}" > "${stage}/VERSION"
+          printf '%s\n' "${GITHUB_SHA}" > "${stage}/REVISION"
+
+          source_date_epoch="$(git log -1 --format=%ct)"
+          find "${stage}" -exec touch -h -d "@${source_date_epoch}" {} +
+          tar \
+            --sort=name \
+            --mtime="@${source_date_epoch}" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -czf "dist/${package}.tar.gz" \
+            -C release \
+            "${package}"
+          (cd release && zip -X -q -r "../dist/${package}.zip" "${package}")
+          (cd dist && sha256sum "${package}.tar.gz" "${package}.zip" > SHA256SUMS)
+
+          echo "package=${package}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify deployment archives
+        shell: bash
+        run: |
+          package="${{ steps.package.outputs.package }}"
+          verify="$(mktemp -d)"
+
+          (cd dist && sha256sum --check SHA256SUMS)
+          unzip -tq "dist/${package}.zip"
+          tar -xzf "dist/${package}.tar.gz" -C "${verify}"
+
+          test -f "${verify}/${package}/vendor/autoload.php"
+          test -f "${verify}/${package}/public/build/manifest.json"
+          test -f "${verify}/${package}/composer.lock"
+          test ! -e "${verify}/${package}/.env"
+          test ! -e "${verify}/${package}/node_modules"
+          test ! -e "${verify}/${package}/tests"
+          php "${verify}/${package}/artisan" --version
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.package }}
+          path: |
+            dist/${{ steps.package.outputs.package }}.tar.gz
+            dist/${{ steps.package.outputs.package }}.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-mysql:
+    name: Verify MySQL ${{ matrix.mysql }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql: ["5.7.44", "8.4"]
+    services:
+      mysql:
+        image: mysql:${{ matrix.mysql }}
+        env:
+          MYSQL_DATABASE: kjaiu_test
+          MYSQL_USER: kjaiu
+          MYSQL_PASSWORD: root
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysql --protocol=tcp --host=127.0.0.1 --user=kjaiu --password=root --database=kjaiu_test --execute='SELECT 1'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:dGVzdC1hcHAtS2V5LXRlc3QtYXBwLUtleS0xMjM0NTY=
+      KJAIU_JWT_SECRET: test-jwt-secret-test-jwt-secret-1234
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: kjaiu_test
+      DB_USERNAME: kjaiu
+      DB_PASSWORD: root
+      DB_CHARSET: utf8mb4
+      DB_COLLATION: utf8mb4_unicode_ci
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: ctype, curl, dom, fileinfo, filter, mbstring, openssl, pdo_mysql
+          coverage: none
+
+      - name: Download resolved dependency lock
+        uses: actions/download-artifact@v8
+        with:
+          name: composer-lock
+          path: resolved-dependencies
+
+      - name: Install locked PHP dependencies
+        run: |
+          cp resolved-dependencies/composer.lock composer.lock
+          composer install --no-interaction --prefer-dist
+          composer validate --strict
+
+      - name: Verify Laravel and MySQL
+        run: |
+          php artisan route:list
+          php artisan migrate:fresh --seed --force
+          vendor/bin/phpunit --configuration phpunit.mysql.xml
+
+  publish:
+    name: Publish release assets
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, verify-mysql]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download deployment archives
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.package }}
+          path: dist
+
+      - name: Attach archives to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          package="${{ needs.build.outputs.package }}"
+
+          if ! gh release view "${version}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            release_flags=()
+            if [[ "${version}" == *-* ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "${version}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "Kjaiu ${version}" \
+              --generate-notes \
+              "dist/${package}.tar.gz" \
+              "dist/${package}.zip" \
+              "dist/SHA256SUMS" \
+              "${release_flags[@]}"
+            exit 0
+          fi
+
+          gh release upload "${version}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            "dist/${package}.tar.gz" \
+            "dist/${package}.zip" \
+            "dist/SHA256SUMS" \
+            --clobber
