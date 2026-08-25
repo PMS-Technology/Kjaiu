@@ -364,6 +364,7 @@ class BillingServiceTest extends TestCase
             'type' => 'cloud',
             'billing_cycle' => 'monthly',
             'price' => $price,
+            'setup_fee' => '0.00',
             'stock_control' => $stockControl,
             'quantity' => $stockControl ? $quantity : null,
             'auto_setup' => $autoSetup,
