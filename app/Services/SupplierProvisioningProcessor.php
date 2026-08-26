@@ -342,9 +342,9 @@ class SupplierProvisioningProcessor
             $preflightPhase = 'quote_validation';
             $quoteEvidence = $this->validateQuote($payload['route'], $quote, $quoteParameters);
             $metadata = is_array($operation->metadata) ? $operation->metadata : [];
-            $metadata['quote_evidence'] = $quoteEvidence + [
+            $metadata['quote_evidence'] = $this->canonicalize($quoteEvidence + [
                 'set_config_status' => $configuration->status,
-            ];
+            ]);
             $metadata['quote_hash'] = hash('sha256', json_encode(
                 $metadata['quote_evidence'],
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
@@ -3091,10 +3091,24 @@ class SupplierProvisioningProcessor
             'source' => $source,
             'expected_amount' => $expectedAmount,
             'request_hash' => hash('sha256', json_encode(
-                $parameters,
+                $this->canonicalize($parameters),
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
             )),
         ];
+    }
+
+    private function canonicalize(array $value): array
+    {
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = $this->canonicalize($item);
+            }
+        }
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return $value;
     }
 
     private function mappingConfigOptions(array $mapping): array

@@ -83,6 +83,10 @@ jobs:
 
       - name: Run SQLite tests
         if: matrix.mysql == '8.4'
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ":memory:"
+          DB_URL: ""
         run: vendor/bin/phpunit --configuration phpunit.xml
 
       - name: Run MySQL tests

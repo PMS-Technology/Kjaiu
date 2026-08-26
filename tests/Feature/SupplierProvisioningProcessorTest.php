@@ -148,8 +148,10 @@ class SupplierProvisioningProcessorTest extends TestCase
         $this->assertSame('10.00', $operation->metadata['quote_evidence']['amount']);
         $this->assertSame('CNY', $operation->metadata['quote_evidence']['currency']);
         $this->assertSame(200, $operation->metadata['quote_evidence']['set_config_status']);
+        $quoteEvidence = $operation->metadata['quote_evidence'];
+        ksort($quoteEvidence);
         $this->assertSame(hash('sha256', json_encode(
-            $operation->metadata['quote_evidence'],
+            $quoteEvidence,
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         )), $operation->metadata['quote_hash']);
         $audit = AuditLog::query()
@@ -1155,7 +1157,10 @@ class SupplierProvisioningProcessorTest extends TestCase
         $this->assertSame('host_identity_unverified', $operation->last_error_code);
         $this->assertNull($operation->available_at);
         $this->assertNotNull($operation->finished_at);
-        $this->assertSame($expectedOperationMetadata, $operation->metadata);
+        ksort($expectedOperationMetadata);
+        $actualOperationMetadata = $operation->metadata;
+        ksort($actualOperationMetadata);
+        $this->assertSame($expectedOperationMetadata, $actualOperationMetadata);
         $this->assertSame(['endpoint' => 'apply_credit', 'status' => 1001], $operation->response_payload);
         $this->assertSame('Pending', $service->status);
         $this->assertSame('original.example.com', $service->domain);
