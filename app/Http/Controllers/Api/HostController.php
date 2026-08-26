@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Service;
 use App\Services\BillingService;
+use App\Services\SupplierProvisioningOutbox;
+use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
@@ -22,8 +25,10 @@ class HostController extends ApiController
         'Failed' => ['name' => '开通失败', 'color' => '#e15151'],
     ];
 
-    public function index(Request $request): JsonResponse
-    {
+    public function index(
+        Request $request,
+        SupplierProvisioningOutbox $supplierOutbox,
+    ): JsonResponse {
         $limit = max(1, min(100, $request->integer('limit', 20)));
         $statuses = $request->input('domainstatus', $request->input('status'));
         $statuses = is_array($statuses) ? $statuses : array_filter([(string) $statuses]);
@@ -50,13 +55,18 @@ class HostController extends ApiController
 
         return $this->success([
             'total' => $paginator->total(),
-            'host' => collect($paginator->items())->map(fn (Service $service) => $this->host($service))->values(),
+            'host' => collect($paginator->items())
+                ->map(fn (Service $service) => $this->host($service, $supplierOutbox))
+                ->values(),
             'domainstatus' => self::STATUSES,
         ]);
     }
 
-    public function show(Request $request, Service $service): JsonResponse
-    {
+    public function show(
+        Request $request,
+        Service $service,
+        SupplierProvisioningOutbox $supplierOutbox,
+    ): JsonResponse {
         if ($service->user_id !== $request->user()->id) {
             return $this->error('产品不存在', 404);
         }
@@ -64,23 +74,31 @@ class HostController extends ApiController
         $service->load('product');
 
         return $this->success([
-            'host' => $this->host($service),
+            'host' => $this->host($service, $supplierOutbox),
             'currency' => config('kjaiu.currency'),
         ]);
     }
 
-    public function renewPage(Request $request, Service $service): JsonResponse
-    {
+    public function renewPage(
+        Request $request,
+        Service $service,
+        SupplierProvisioningOutbox $supplierOutbox,
+    ): JsonResponse {
         if ($service->user_id !== $request->user()->id) {
             return $this->error('产品不存在', 404);
         }
         if (! in_array($service->status, ['Active', 'Suspended'], true)) {
             return $this->error('产品不可续费');
         }
+        if ($supplierOutbox->isSupplierManaged($service)) {
+            return $this->error('当前版本暂不支持上游供应商服务续费');
+        }
 
         $product = $service->product()->with('prices')->first();
         $cycles = collect();
-        if ($product && ! in_array($product->billing_cycle, ['free', 'onetime'], true)) {
+        if ($product
+            && ! in_array($product->billing_cycle, ['free', 'onetime'], true)
+            && ! $supplierOutbox->isSupplierManaged($service, $product->billing_cycle)) {
             $cycles->push([
                 'setup_fee' => $product->setup_fee,
                 'price' => $product->price,
@@ -93,7 +111,8 @@ class HostController extends ApiController
         if ($product) {
             foreach ($product->prices->where('is_active', true) as $price) {
                 if (in_array($price->billing_cycle, ['free', 'onetime'], true)
-                    || $cycles->contains('billingcycle', $price->billing_cycle)) {
+                    || $cycles->contains('billingcycle', $price->billing_cycle)
+                    || $supplierOutbox->isSupplierManaged($service, $price->billing_cycle)) {
                     continue;
                 }
                 $cycles->push([
@@ -114,12 +133,28 @@ class HostController extends ApiController
         ]);
     }
 
-    public function renew(Request $request, Service $service, BillingService $billing): JsonResponse
-    {
+    public function renew(
+        Request $request,
+        Service $service,
+        BillingService $billing,
+        SupplierProvisioningOutbox $supplierOutbox,
+    ): JsonResponse {
+        if ($service->user_id !== $request->user()->id) {
+            return $this->error('产品不存在', 404);
+        }
+
         $validator = Validator::make($request->all(), [
             'billingcycle' => ['nullable', 'string', 'max:32'],
         ]);
         if ($validator->fails()) {
+            return $this->validationError($validator->errors());
+        }
+        $billingCycle = $request->string('billingcycle', $service->billing_cycle)->toString();
+        try {
+            $supplierOutbox->ensureLocalRenewalAvailable($service, $billingCycle);
+        } catch (DomainException $exception) {
+            $validator->errors()->add('service', $exception->getMessage());
+
             return $this->validationError($validator->errors());
         }
 
@@ -127,7 +162,7 @@ class HostController extends ApiController
             $invoice = $billing->createRenewalInvoice(
                 $request->user(),
                 $service,
-                $request->string('billingcycle', $service->billing_cycle)->toString(),
+                $billingCycle,
             );
         } catch (ValidationException $exception) {
             return $this->validationError($exception->validator->errors());
@@ -136,8 +171,11 @@ class HostController extends ApiController
         return $this->success(['invoice_id' => $invoice->id, 'invoiceid' => $invoice->id], '续费账单创建成功');
     }
 
-    public function autoRenew(Request $request, Service $service): JsonResponse
-    {
+    public function autoRenew(
+        Request $request,
+        Service $service,
+        SupplierProvisioningOutbox $supplierOutbox,
+    ): JsonResponse {
         if ($service->user_id !== $request->user()->id) {
             return $this->error('产品不存在', 404);
         }
@@ -153,12 +191,65 @@ class HostController extends ApiController
         $autoRenew = $request->has('status')
             ? $request->boolean('status')
             : $request->boolean('initiative_renew');
-        if ($autoRenew && (! in_array($service->status, ['Active', 'Suspended'], true)
-            || in_array($service->billing_cycle, ['free', 'onetime'], true))) {
-            return $this->error('当前产品不可启用自动续费');
-        }
 
-        $service->update(['auto_renew' => $autoRenew]);
+        try {
+            DB::transaction(function () use ($request, $service, $supplierOutbox, $autoRenew): void {
+                $lockedService = Service::query()
+                    ->where('user_id', $request->user()->id)
+                    ->lockForUpdate()
+                    ->findOrFail($service->id);
+                if (! $autoRenew) {
+                    $lockedService->update(['auto_renew' => false]);
+
+                    return;
+                }
+
+                $product = $lockedService->product()->lockForUpdate()->first();
+                if ($product) {
+                    $product->setRelation(
+                        'prices',
+                        $product->prices()->orderBy('id')->lockForUpdate()->get(),
+                    );
+                }
+                $price = $product?->priceFor((string) $lockedService->billing_cycle);
+
+                try {
+                    $supplierOutbox->ensureLocalRenewalAvailable(
+                        $lockedService,
+                        (string) $lockedService->billing_cycle,
+                    );
+                } catch (DomainException) {
+                    throw ValidationException::withMessages([
+                        'auto_renew' => '当前版本暂不支持上游供应商服务自动续费',
+                    ]);
+                }
+
+                if ($lockedService->status !== 'Active'
+                    || ! $lockedService->next_due_at
+                    || ! in_array($lockedService->billing_cycle, [
+                        'hourly',
+                        'daily',
+                        'weekly',
+                        'monthly',
+                        'quarterly',
+                        'semiannually',
+                        'annually',
+                        'yearly',
+                        'biennially',
+                        'triennially',
+                    ], true)
+                    || ! $product?->is_active
+                    || ! $price?->is_active) {
+                    throw ValidationException::withMessages([
+                        'auto_renew' => '当前服务不可启用自动续费',
+                    ]);
+                }
+
+                $lockedService->update(['auto_renew' => true]);
+            }, 3);
+        } catch (ValidationException $exception) {
+            return $this->validationError($exception->validator->errors());
+        }
 
         return $this->success([], '修改成功');
     }
@@ -179,8 +270,10 @@ class HostController extends ApiController
         ]);
     }
 
-    private function host(Service $service): array
-    {
+    private function host(
+        Service $service,
+        SupplierProvisioningOutbox $supplierOutbox,
+    ): array {
         return [
             'id' => $service->id,
             'type' => $service->type,
@@ -193,7 +286,8 @@ class HostController extends ApiController
             'billingcycle' => $service->billing_cycle,
             'dedicatedip' => $service->dedicated_ip ?? '',
             'assignedips' => $service->assigned_ips ?? [],
-            'initiative_renew' => $service->auto_renew ? 1 : 0,
+            'initiative_renew' => $service->auto_renew
+                && ! $supplierOutbox->isSupplierManaged($service) ? 1 : 0,
             'notes' => $service->notes ?? '',
             'product_id' => $service->product_id,
             'product_name' => $service->product?->name ?? $service->name,

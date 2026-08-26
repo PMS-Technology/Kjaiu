@@ -10,8 +10,7 @@ class EnsureAdministrator
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (! $request->user() || ! $request->user()->isAdministrator() || $request->user()->status !== 'Active') {
-            $request->session()->invalidate();
+        if (! $request->user()?->isAdministrator()) {
             abort(403);
         }
 

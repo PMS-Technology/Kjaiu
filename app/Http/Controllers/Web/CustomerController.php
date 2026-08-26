@@ -7,6 +7,8 @@ use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -67,10 +69,26 @@ class CustomerController extends Controller
         if (blank($data['password'] ?? null)) {
             unset($data['password']);
         }
-        if (array_key_exists('password', $data) || $data['status'] !== $customer->status) {
-            $data['token_version'] = $customer->token_version + 1;
-        }
-        $customer->update($data);
+        $customerId = $customer->id;
+        $customer = DB::transaction(function () use ($customerId, $data) {
+            $customer = User::query()
+                ->where('role', 'client')
+                ->lockForUpdate()
+                ->findOrFail($customerId);
+            $securityChanged = array_key_exists('password', $data)
+                || $data['status'] !== $customer->status;
+            if ($securityChanged) {
+                $data['token_version'] = $customer->token_version + 1;
+                $data['remember_token'] = Str::random(60);
+            }
+
+            $customer->forceFill($data)->save();
+            if ($securityChanged) {
+                $this->revokeDatabaseSessions($customer);
+            }
+
+            return $customer->fresh();
+        }, 3);
         AuditLog::record(
             $request,
             'customer.updated',
@@ -80,5 +98,17 @@ class CustomerController extends Controller
         );
 
         return redirect()->route('admin.customers.index')->with('success', '客户资料已更新');
+    }
+
+    private function revokeDatabaseSessions(User $customer): void
+    {
+        if (config('session.driver') !== 'database') {
+            return;
+        }
+
+        DB::connection(config('session.connection'))
+            ->table((string) config('session.table', 'sessions'))
+            ->where('user_id', $customer->id)
+            ->delete();
     }
 }

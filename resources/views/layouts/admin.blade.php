@@ -33,6 +33,14 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v6H3V4Zm2 2v2h2V6H5Zm-2 6h18v8H3v-8Zm2 2v4h2v-4H5Zm4 0v2h8v-2H9Z"/></svg>
                 <span>服务</span>
             </a>
+            <a href="{{ route('admin.suppliers.index') }}" class="{{ request()->routeIs('admin.suppliers.*') ? 'is-active' : '' }}">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h16v6H4V3Zm2 2v2h3V5H6Zm-2 6h7v10H4V11Zm9 0h7v10h-7V11Zm2 2v2h3v-2h-3Z"/></svg>
+                <span>上游供应商</span>
+            </a>
+            <a href="{{ route('admin.supplier-operations.index') }}" class="{{ request()->routeIs('admin.supplier-operations.*') ? 'is-active' : '' }}">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h16v4H4V3Zm0 7h10v4H4v-4Zm0 7h7v4H4v-4Zm13-8 5 5-5 5v-3h-4v-4h4V9Z"/></svg>
+                <span>上游操作</span>
+            </a>
 
             <p class="nav-label nav-label-spaced">财务中心</p>
             <a href="{{ route('admin.invoices.index') }}" class="{{ request()->routeIs('admin.invoices.*') ? 'is-active' : '' }}">
@@ -42,6 +50,12 @@
             <a href="{{ route('admin.finance.index') }}" class="{{ request()->routeIs('admin.finance.*') ? 'is-active' : '' }}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3V5Zm2 2v10h14V7H5Zm7 1a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM6 8h2v2H6V8Zm10 6h2v2h-2v-2Z"/></svg>
                 <span>资金流水</span>
+            </a>
+
+            <p class="nav-label nav-label-spaced">账户</p>
+            <a href="{{ route('portal.dashboard') }}">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4 2 12l8 8v-5h8v-6h-8V4Zm10 2h2v12h-2V6Z"/></svg>
+                <span>返回客户门户</span>
             </a>
         </nav>
 

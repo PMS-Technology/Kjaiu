@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Models\CartItem;
 use App\Models\PaymentGateway;
 use App\Models\Product;
+use App\Models\SupplierProductMapping;
 use App\Services\BillingService;
 use App\Services\Money;
 use Illuminate\Http\JsonResponse;
@@ -121,12 +122,25 @@ class CartController extends ApiController
             return $this->error('商品库存不足');
         }
 
+        $configuration = is_array($request->input('configoption'))
+            ? $request->input('configoption')
+            : [];
+        if ($configuration !== [] && SupplierProductMapping::query()
+            ->where('product_id', $product->id)
+            ->where('local_billing_cycle', $cycle)
+            ->where('is_active', true)
+            ->whereHas('account', fn ($query) => $query->where('is_active', true))
+            ->whereHas('catalogProduct', fn ($query) => $query->where('is_active', true))
+            ->exists()) {
+            return $this->error('当前上游映射商品暂不支持客户自定义配置');
+        }
+
         $item = CartItem::create([
             'user_id' => $request->user()->id,
             'product_id' => $product->id,
             'billing_cycle' => $cycle,
             'quantity' => $quantity,
-            'configuration' => $request->input('configoption', []),
+            'configuration' => $configuration,
         ]);
 
         $position = CartItem::query()

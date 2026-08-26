@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class ProductController extends Controller
@@ -96,7 +97,7 @@ class ProductController extends Controller
                 ->whereHas('order', fn ($query) => $query->where('status', 'Pending'))
                 ->sum('reserved_quantity');
             if ($quantity !== null && $reservedQuantity > Product::MAX_STOCK - $quantity) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'quantity' => '可售库存与待释放预占之和超出系统支持范围',
                 ]);
             }
@@ -179,14 +180,14 @@ class ProductController extends Controller
         ]);
 
         if (collect($validated['prices'] ?? [])->contains('billing_cycle', $validated['billing_cycle'])) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'prices' => '附加周期不能与默认周期重复',
             ]);
         }
 
         $stockControl = $request->boolean('stock_control');
         if ($stockControl && ($validated['quantity'] ?? null) === null) {
-            throw \Illuminate\Validation\ValidationException::withMessages(['quantity' => '启用库存控制时必须填写库存']);
+            throw ValidationException::withMessages(['quantity' => '启用库存控制时必须填写库存']);
         }
 
         return [

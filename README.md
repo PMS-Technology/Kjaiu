@@ -13,7 +13,8 @@ Kjaiu is a Laravel 12 billing and hosting operations system. It combines a respo
 - Service creation, status management, monthly billing anchors, manual renewal, and credit-based automatic renewal
 - Administrator dashboards for clients, products, invoices, services, transactions, and audited credit adjustments
 - Legacy catalog endpoints and the core v1 route aliases used by IDCsmart Finance themes
-- Scheduled invoice expiration and automatic renewal commands
+- Durable supplier provisioning with serialized legacy-cart mutations and safe host confirmation polling
+- Scheduled invoice expiration, automatic renewal, supplier provisioning, and host polling commands
 
 This is a focused compatibility implementation, not a complete clone of every IDCsmart Finance module. Tickets, messages, referrals, identity verification, news, downloads, and marketing modules are not implemented.
 
@@ -83,10 +84,26 @@ Run Laravel's scheduler every minute in production:
 
 The scheduler runs:
 
-| Command                 | Frequency        | Purpose                                                                                 |
-| ----------------------- | ---------------- | --------------------------------------------------------------------------------------- |
-| `kjaiu:expire-invoices` | Every 15 minutes | Cancel overdue unpaid invoices and release snapshotted stock reservations               |
-| `kjaiu:auto-renew`      | Hourly           | Create one renewal invoice per service due date and pay it from available client credit |
+| Command                             | Frequency        | Purpose                                                                                 |
+| ----------------------------------- | ---------------- | --------------------------------------------------------------------------------------- |
+| `kjaiu:expire-invoices`             | Every 15 minutes | Cancel overdue unpaid invoices and release snapshotted stock reservations               |
+| `kjaiu:auto-renew`                  | Hourly           | Create one renewal invoice per service due date and pay it from available client credit |
+| `kjaiu:supplier-reconcile-renewals` | Every minute     | Fail unsupported legacy queued supplier renewals without charging or HTTP               |
+| `kjaiu:supplier-recover`            | Every minute     | Classify stale running supplier claims without replaying purchase mutations             |
+| `kjaiu:supplier-process`            | Every minute     | Process due queued first-purchase supplier provisioning operations                      |
+| `kjaiu:supplier-poll`               | Every minute     | Safely confirm supplier host state without replaying purchase mutations                 |
+
+Supplier purchase routing comes from the immutable, hashed mapping snapshot written during local settlement. Later display or mapping changes do not alter a queued request. Legacy automatic supplier-credit payment is disabled by default. After settlement returns an upstream invoice, Kjaiu persists the invoice and host references without calling `/apply_credit`, leaves the local service `Pending`, and moves the operation to `blocked_credit` / `awaiting_manual_supplier_payment` with `legacy_payment_review_required` for operator review. A supplier host ID, an `Active` host, or a local paid invoice is not upstream payment proof and cannot activate that service.
+
+For manual payment, open that exact invoice in the supplier console and verify its invoice ID, product, amount, and currency against the frozen operation and local invoice/service before paying it. After the supplier shows it paid, verify the host belongs to the same invoice, then use **Admin > Supplier Operations > 已在上游人工付款并确认主机** with the host ID, current administrator password, and explicit attestation. This records named human evidence, not cryptographic payment proof; it performs no supplier payment call and does not directly activate the service. Only a later read-only poll returning `Active` may activate it. The host-reconciliation action by itself is evidence-only and cannot confirm payment.
+
+An advanced per-supplier compatibility option can explicitly enable legacy `/apply_credit`. Changing it in either direction requires the current administrator password, uses the shared supplier-sensitive rate limit, and is blocked while the account has nonterminal operations or pending order-item routes. The credential-only rotation exception does not apply. The option change is audited only as its old/new boolean state. This endpoint cannot carry the expected amount, currency, invoice version, or idempotency preconditions. That leaves a time-of-check/time-of-use and unbounded-debit window in which the invoice can change after quote validation, so the frozen quote cannot atomically cap the supplier's amount or currency debit. When opted in, only a structurally valid application status `1001` is durable payment confirmation; status `200` and unknown outcomes remain unconfirmed and are never replayed.
+
+Automatic host polling and local activation require durable payment confirmation. A `running` provision is stale after 15 minutes without an update. Recovery requeues only a validated preflight claim with no mutation evidence, moves a payment-confirmed known host to read-only confirmation polling, and marks every unproven mutation outcome `ambiguous`. Supplier operations marked `blocked_credit` or `ambiguous` require administrator review. Never move them back to `queued` blindly. For `ambiguous`, do not retry purchase, settlement, payment, or any other supplier write; use only supplier-side evidence review and the administration page's evidence-only host reconciliation, which performs a supplier read and persists a local link without confirming payment.
+
+Before `clearCart` starts, supplier client construction, authentication, `setConfig`, quote, DNS/TLS, and temporary read failures are provably mutation-free. Retryable preflight failures use `queued` with `available_at`: the first failure waits 60 seconds, the second waits 120 seconds, and the third total failure becomes `failed` with `preflight_retry_exhausted`. Deterministic snapshot, quote amount, and currency failures fail immediately. Due selectors require `available_at` to be null or in the past, so repeated command runs cannot skip the delay. Once any mutation step starts, no automatic replay is allowed.
+
+An active supplier account may rotate only its saved credentials while operations are nonterminal, after current-administrator password verification. The account ID and frozen base URL identity stay unchanged, cached supplier JWTs are invalidated, and queued operations use the new credentials. Base URL, driver, code, active state, mapping, and the legacy-credit compatibility option remain blocked until affected operations are terminal. The scheduled legacy-renewal reconciler makes pre-release queued `renew` rows terminal with `unsupported_supplier_renewal`; it never charges or calls the supplier.
 
 ## Payment Boundary
 
@@ -103,7 +120,7 @@ See [`docs/API.md`](docs/API.md) for the API contract and [`docs/DEPLOYMENT.md`]
 - `app/Http/Controllers/Api`: v1-compatible JSON controllers
 - `app/Http/Controllers/Web`: administrator console controllers
 - `database/migrations`: MySQL schema and finance invariants
-- `routes/console.php`: key generation, invoice expiration, and automatic renewal
+- `routes/console.php`: key generation, invoice expiration, automatic renewal, and supplier operation commands
 - `tests`: money, authentication, API contract, idempotency, stock, credit, and renewal tests
 
 Amounts are stored as `DECIMAL(18,2)` and converted to integer minor units for calculations. Finance mutations use database transactions and row locks; production concurrency validation must run against MySQL, not SQLite.

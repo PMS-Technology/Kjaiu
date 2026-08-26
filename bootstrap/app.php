@@ -1,10 +1,11 @@
 <?php
 
+use App\Http\Middleware\AuthenticateFinanceApi;
+use App\Http\Middleware\EnsureActiveUser;
+use App\Http\Middleware\EnsureAdministrator;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use App\Http\Middleware\AuthenticateFinanceApi;
-use App\Http\Middleware\EnsureAdministrator;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -17,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'finance.auth' => AuthenticateFinanceApi::class,
+            'active' => EnsureActiveUser::class,
             'admin' => EnsureAdministrator::class,
         ]);
     })

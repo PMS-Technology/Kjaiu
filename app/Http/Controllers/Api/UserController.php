@@ -2,10 +2,13 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class UserController extends ApiController
 {
@@ -64,14 +67,24 @@ class UserController extends ApiController
             return $this->validationError($validator->errors());
         }
 
-        if (! Hash::check($request->string('old_password')->toString(), $request->user()->password)) {
+        $changed = DB::transaction(function () use ($request): bool {
+            $user = User::query()->lockForUpdate()->findOrFail($request->user()->id);
+            if (! Hash::check($request->string('old_password')->toString(), $user->password)) {
+                return false;
+            }
+
+            $user->forceFill([
+                'password' => $request->string('new_password')->toString(),
+                'token_version' => $user->token_version + 1,
+                'remember_token' => Str::random(60),
+            ])->save();
+
+            return true;
+        }, 3);
+
+        if (! $changed) {
             return $this->error('原密码错误');
         }
-
-        $request->user()->update([
-            'password' => $request->string('new_password')->toString(),
-            'token_version' => $request->user()->token_version + 1,
-        ]);
 
         return $this->success([], '密码修改成功');
     }

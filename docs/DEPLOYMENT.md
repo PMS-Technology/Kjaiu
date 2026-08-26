@@ -98,11 +98,11 @@ Install one cron entry:
 * * * * * cd /var/www/kjaiu && php artisan schedule:run >> /dev/null 2>&1
 ```
 
-Use `php artisan schedule:list` after every release to verify registration. `withoutOverlapping()` requires a functioning cache store; the default production configuration uses the database cache table.
+Use `php artisan schedule:list` after every release to verify registration. `withoutOverlapping()` requires a functioning cache store; the default production configuration uses the database cache table. Supplier commands remain foreground processes so scheduler output and failures stay observable and overlap locks are released by the same scheduler process.
 
 ## Queue Worker
 
-The current finance mutations execute synchronously. If gateway notifications or provisioning are moved to jobs, run a supervised worker:
+The current finance mutations execute synchronously. If gateway notifications are moved to jobs, run a supervised worker:
 
 ```bash
 php artisan queue:work --sleep=3 --tries=3 --max-time=3600
@@ -113,6 +113,54 @@ Restart workers after every release:
 ```bash
 php artisan queue:restart
 ```
+
+## Supplier Operation Outbox
+
+Settling an invoice for a mapped first purchase writes a durable `queued` row to `supplier_operations` in the same database transaction. Settlement does not contact the supplier or dispatch a job. This release does not create supplier renewal operations. `kjaiu:supplier-reconcile-renewals` idempotently marks any pre-release queued `renew` rows `failed` with `unsupported_supplier_renewal`, without charging or supplier HTTP.
+
+The scheduler runs `kjaiu:supplier-reconcile-renewals --limit=500`, `kjaiu:supplier-recover --limit=100`, `kjaiu:supplier-process --limit=20`, and `kjaiu:supplier-poll --limit=50` every minute, in that registration order. They reconcile unsupported legacy renewals, inspect stale claims, process due queued first-purchase provisioning, and perform due host confirmations respectively. All four commands use `withoutOverlapping()` and continue with later records when one operation fails. Manual limits are clamped to `1..1000` for renewal reconciliation, `1..500` for recovery, `1..100` for processing, and `1..200` for polling.
+
+Provisioning mutations are never automatically replayed after an unknown outcome. Purchase parameters and supplier/mapping/catalog/product references are read from the encrypted, hashed `request_payload.mapping` snapshot created during local settlement, not mutable live catalog routing or options. The processor verifies the snapshot hash, duplicated upstream fields, local ownership, referenced record existence, and account consistency before any HTTP request. Snapshot or reference corruption fails closed before supplier I/O. Top-level and `data` invoice/host references must resolve to at most one identical, bounded scalar ID of each type; conflicting IDs, multi-value arrays, control characters, and IDs over 128 bytes fail closed before credit is attempted.
+
+Legacy supplier-credit payment is disabled by default through `supplier_accounts.options.allow_legacy_unbounded_credit_payment`. Missing values and every value other than boolean `true` are disabled. After `clear_cart` recovery or `settle_cart` returns an invoice, the processor first persists the owned invoice and any host reference. With the option disabled it does not call `POST /apply_credit`; it leaves the local service `Pending` and records `status=blocked_credit`, `step=awaiting_manual_supplier_payment`, and `last_error_code=legacy_payment_review_required`. The operation is excluded from both purchase and polling selectors and requires supplier-side manual payment review.
+
+For a default-off `awaiting_manual_supplier_payment` operation, first open the exact existing invoice in the supplier console and match its invoice ID, product, amount, and currency against the frozen operation and local invoice/service. Pay that invoice through the supplier console, verify its paid state there, and identify the host created for that same invoice. In **Admin > Supplier Operations**, open the operation and use **已在上游人工付款并确认主机** only after all of those values and the host ownership match. Enter the current administrator password, the bounded opaque host ID, and the explicit attestation checkbox. Kjaiu performs only `GET /host/header` outside the database transaction, then locks and revalidates the operation, account, service, immutable route, invoice link, and any service link before recording `payment_confirmed=true`, `payment_confirmation=admin_attested`, the administrator ID, confirmation time, and `Paid` invoice-link status. The operation enters `awaiting_confirmation`; only a subsequent safe-read host result of `Active` can activate the local service.
+
+This action is a durable human attestation based on supplier-side evidence, not cryptographic payment verification and not proof supplied by the Finance API. A readable or even `Active` host alone does not attest payment. **按供应商证据关联主机** remains evidence-only and cannot activate an unpaid/unattested operation. Never use either action as a generic purchase retry, and never paste credentials, JWTs, request/response payloads, correlation tokens, or machine passwords into the host-ID field.
+
+The administration form exposes the option only as an advanced high-risk compatibility control. Enabling or disabling it requires the current administrator password and the shared `supplier-sensitive` limiter. It is a connection-policy change, so the account model and controller both reject it while the account has nonterminal operations or order-item routes belonging to `Pending` orders; the credential-only rotation exception does not apply. Audit data represents the option only as its old/new boolean value and never includes raw options or credentials.
+
+Opting in retains the strict legacy path, but does not make it atomic. `/apply_credit` accepts an invoice ID and broad credit-use flags but cannot carry the frozen expected amount, currency, invoice version, or an idempotency precondition. This creates a time-of-check/time-of-use and unbounded-debit risk: the upstream invoice can change after Kjaiu checks the frozen quote but before the supplier applies credit, with no atomic compare-and-pay guard. The supplier can therefore debit an amount or currency that the frozen quote cannot atomically cap. Only a structurally valid application status `1001` with matching durable invoice evidence confirms payment. Authentication, timeout, malformed, status `200`, and otherwise unknown outcomes remain fail-closed and are never replayed.
+
+The **兼容自动扣余额** recovery control is shown and accepted only when the account option is exactly boolean `true`, the operation is the exact `blocked_credit` / `upstream_credit_insufficient` provision state, and the owned supplier invoice ID is present and unpaid. It requires the current administrator password, explicit risk confirmation, CSRF protection, and its existing five-attempts-per-minute throttle. One recovery invocation makes at most one `/apply_credit` call for that existing invoice and never repeats cart or settlement calls. An unknown outcome becomes `ambiguous` and must not be replayed.
+
+Client construction, authentication, `setConfig`, quote, DNS/TLS, and temporary response-read failures before the `clearCart` mutation checkpoint are safe preflight failures. Retryable auth/transport/read failures increment `metadata.preflight_failures`. Failure 1 returns to `queued` for 60 seconds, failure 2 for 120 seconds, and failure 3 becomes `failed` with `preflight_retry_exhausted`. `kjaiu:supplier-process` and direct processor claims both require `available_at` to be null or due. Invalid immutable snapshots and deterministic quote amount/currency failures are terminal immediately. After the `clearCart` mutation checkpoint, existing ambiguous/no-replay rules apply unchanged.
+
+The per-supplier-account cart lock has a fixed 900-second lease, safely above the reviewed worst-case sequence of authentication plus clear/add/settle/credit requests at the 30-second request timeout. The lease is not renewed. Operators must keep that sequence below 15 minutes and investigate transport stalls rather than increasing endpoint retries; mutation HTTP calls are never replayed automatically.
+
+A `running` provision is considered stale after 15 minutes without an `updated_at` change. This is deliberately longer than the 30-second supplier HTTP timeout and the normal checkpoint interval. Recovery is local-only and never invokes a supplier write endpoint:
+
+1. `claimed`, `preflight`, or `validation` with a valid snapshot and no response/link/reference evidence returns to `queued`.
+2. Any `clear_cart`, `add_to_cart`, `settle_cart`, `apply_credit`, or unknown post-claim step is `ambiguous` unless durable payment confirmation and a safe host identifier are already persisted.
+3. A conflict or invalid persisted reference is `ambiguous` and retains existing evidence for review.
+4. A valid known host without confirmed payment is observation evidence only. A default-disabled payment operation remains `blocked_credit` / `awaiting_manual_supplier_payment`; other unconfirmed operations remain `blocked_credit` or `ambiguous`. None is automatically polled or activated.
+5. A structurally valid `/apply_credit` application status `1001` records `payment_confirmed=true`, application status `1001`, and the matching supplier invoice ID. A paid operation with no known host becomes `ambiguous` with `host_reconciliation_required` and remains excluded from automatic polling until an administrator validates and attaches a host.
+6. A payment-confirmed known host is linked locally and moved to `awaiting_confirmation`; only the existing read-only `GET /host/header` poll follows.
+7. Repeated recovery is idempotent because only stale `running` provisions are selected.
+
+Selectors otherwise consume only `provision` operations in the exact eligible state: `queued` for purchasing and `awaiting_confirmation` for safe polling. `running`, `succeeded`, `ambiguous`, `blocked_credit`, `failed`, and renewal operations are excluded from purchase sweeps. Repeated command runs therefore cannot repeat a completed or indeterminate purchase sequence.
+
+Administrators may rotate only the credentials of an active supplier account while operations are nonterminal. The update requires the current administrator password, keeps the account and frozen base URL identity unchanged, invalidates JWT cache entries for both credential identities, and records only credential-change booleans in the audit log. Base URL, driver, code, disable/reactivation, mapping, and the legacy-credit compatibility option remain blocked. Existing queued operations resolve the same account at claim time and therefore use the rotated credentials without changing their immutable route.
+
+The reviewed IDCsmart Finance assumptions for this release are:
+
+1. `POST /cart/clear` may return application status `200` for an empty/recovered cart or `400` with an existing `invoiceid` or `hostid` for recovery.
+2. `POST /cart/settle` succeeds only when application status `200` or `1001` contains an `invoiceid` or `hostid`.
+3. `POST /apply_credit` is not called unless `allow_legacy_unbounded_credit_payment` is exactly boolean `true`. When opted in, it confirms payment only with a structurally valid application status `1001`. Application status `200` is never proof of payment. Status `200` or `400` is `blocked_credit` only when its message explicitly combines a credit/balance term with an insufficient/not-enough term (including the observed Chinese equivalents); every other non-`1001` outcome remains ambiguous.
+4. `GET /host/header` succeeds only when `data.host_data` is an object. Only host status `Active` may activate the local service, and only when the operation still has matching durable payment evidence. `Failed`, `Cancelled`/`Canceled`, `Deleted`, and `Suspended` are terminal non-active outcomes. Other states remain pending until the bounded poll count is exhausted.
+5. Optional `host_data.regdate` and `host_data.nextduedate` values are accepted only as Unix seconds or exact `Y-m-d`, `Y-m-d H:i:s`, RFC 3339 `Y-m-dTH:i:sP`, or UTC `Y-m-dTH:i:sZ` strings. Values must fall from 2000-01-01 through 2100-01-01, registration cannot be more than five minutes in the future, next due must be future and later than registration, and malformed or nonsensical values prevent activation. On first activation, valid upstream registration aligns local `registered_at` and `activated_at`, and valid upstream next due aligns `next_due_at`; absent fields use the existing local activation calculation. Existing activation terms are preserved on later recovery polls.
+
+Monitor `supplier_operations` for `ambiguous`, `blocked_credit`, `failed`, and `poll_exhausted` outcomes. `blocked_credit` and `ambiguous` always require administrator review. In particular, `awaiting_manual_supplier_payment` means Kjaiu deliberately created or recovered the upstream invoice without attempting legacy credit payment. Reconcile it against the exact supplier-side invoice ID, product, amount, currency, payment state, and host evidence; a host status alone is not payment confirmation. For `ambiguous`, do not retry purchase, settlement, payment, or any other supplier write. Use only evidence review and the administration page's evidence-association/reconciliation control, which reads the supplier host but persists only a local link and does not confirm payment. Do not move operations back to `queued` or invoke write endpoints manually without first proving that no purchase or payment was completed.
 
 ## Payment Gateway Release Gate
 
@@ -158,7 +206,7 @@ Smoke-test:
 5. Nested email login returns a JWT and `Authorization: JWT ...` can access `/v1/user`.
 6. A product can be added, checked out once with an idempotency key, and paid once from credit.
 7. An external gateway selection leaves the invoice unpaid.
-8. `php artisan schedule:list` includes invoice expiration and automatic renewal.
+8. `php artisan schedule:list` includes invoice expiration, automatic renewal, legacy supplier renewal reconciliation, stale supplier recovery, supplier provisioning, and supplier host polling.
 
 ## Backup And Rollback
 

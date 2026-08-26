@@ -38,4 +38,14 @@ class OrderItem extends Model
     {
         return $this->hasMany(InvoiceItem::class);
     }
+
+    public function supplierOperations()
+    {
+        return $this->hasMany(SupplierOperation::class);
+    }
+
+    public function supplierRoute()
+    {
+        return $this->hasOne(SupplierOrderItemRoute::class);
+    }
 }

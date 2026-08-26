@@ -8,12 +8,21 @@ use App\Models\PaymentGateway;
 use App\Models\Product;
 use App\Models\ProductGroup;
 use App\Models\Service;
+use App\Models\SupplierAccount;
+use App\Models\SupplierCatalogProduct;
+use App\Models\SupplierOperation;
+use App\Models\SupplierProductMapping;
+use App\Models\SupplierServiceLink;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\BillingService;
 use App\Services\JwtService;
+use App\Services\SupplierProvisioningOutbox;
+use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -33,6 +42,7 @@ class BillingServiceTest extends TestCase
 
         config()->set('kjaiu.jwt.secret', str_repeat('test-secret-', 4));
         config()->set('kjaiu.jwt.issuer', 'https://kjaiu.test');
+        config()->set('app.url', 'https://billing.kjaiu.test');
 
         $this->user = User::factory()->create(['credit' => '500.00']);
         $root = ProductGroup::create(['name' => 'Infrastructure']);
@@ -97,6 +107,366 @@ class BillingServiceTest extends TestCase
             'service_id' => $service->id,
             'rel_id' => $service->id,
         ]);
+    }
+
+    public function test_mapped_settlement_queues_one_snapshot_per_pending_service_without_http(): void
+    {
+        Http::preventStrayRequests();
+        Carbon::setTestNow(Carbon::parse('2026-08-26 12:30:00'));
+        $product = $this->product('Mapped compute', '30.00', null, true, false);
+        $mappingOptions = [
+            'configoption' => ['image' => 'ubuntu', 'region' => 'upstream'],
+            'promotion' => 'standard',
+        ];
+        $mapping = $this->supplierMapping($product, 'provision', $mappingOptions);
+        CartItem::create([
+            'user_id' => $this->user->id,
+            'product_id' => $product->id,
+            'billing_cycle' => 'monthly',
+            'quantity' => 2,
+            'configuration' => [],
+        ]);
+
+        $invoice = $this->billing->checkout($this->user, null, 'mapped-provision', 'Credit');
+        $replayedInvoice = $this->billing->checkout(
+            $this->user,
+            null,
+            'mapped-provision',
+            'Credit',
+        );
+        $this->assertSame($invoice->id, $replayedInvoice->id);
+        $this->assertDatabaseCount('supplier_order_item_routes', 1);
+        try {
+            $mapping->update([
+                'upstream_billing_cycle' => 'year',
+                'options' => ['configoption' => ['image' => 'changed']],
+            ]);
+            $this->fail('Expected frozen mapping identity to remain immutable.');
+        } catch (DomainException $exception) {
+            $this->assertSame(
+                'Supplier mappings with historical references cannot change routing identity.',
+                $exception->getMessage(),
+            );
+        }
+        $mapping->refresh()->update(['is_active' => false]);
+        try {
+            $mapping->catalogProduct->update([
+                'upstream_product_id' => 'changed-live-product',
+            ]);
+            $this->fail('Expected frozen catalog identity to remain immutable.');
+        } catch (DomainException $exception) {
+            $this->assertSame(
+                'Upstream product IDs referenced by supplier history are immutable.',
+                $exception->getMessage(),
+            );
+        }
+        $mapping->catalogProduct->refresh()->update(['is_active' => false]);
+        $this->billing->payWithCredit($this->user, $invoice);
+
+        $services = Service::query()->orderBy('unit_index')->get();
+        $operations = SupplierOperation::query()->orderBy('id')->get()->keyBy('service_id');
+        $orderItem = $invoice->order->items->sole();
+        $route = $orderItem->supplierRoute;
+        $this->assertCount(2, $services);
+        $this->assertCount(2, $operations);
+        $this->assertNotNull($route);
+        $this->assertSame(['Pending', 'Pending'], $services->pluck('status')->all());
+        $this->assertTrue($services->every(fn (Service $service): bool => $service->activated_at === null));
+        $this->assertTrue($services->every(fn (Service $service): bool => $service->billing_anchor_day === null));
+        $this->assertTrue($services->every(fn (Service $service): bool => $service->next_due_at === null));
+
+        $tokens = [];
+        $downstreamIds = [];
+        foreach ($services as $service) {
+            $operation = $operations->get($service->id);
+            $this->assertNotNull($operation);
+            $this->assertSame(SupplierOperation::ACTION_PROVISION, $operation->action);
+            $this->assertSame(SupplierOperation::STATUS_QUEUED, $operation->status);
+            $this->assertSame('queued', $operation->step);
+            $this->assertSame(0, $operation->attempts);
+            $this->assertSame($mapping->supplier_account_id, $operation->supplier_account_id);
+            $this->assertSame($mapping->id, $operation->supplier_product_mapping_id);
+            $this->assertSame($route->id, $operation->supplier_order_item_route_id);
+            $this->assertSame($invoice->order_id, $operation->order_id);
+            $this->assertSame($orderItem->id, $operation->order_item_id);
+            $this->assertSame($invoice->id, $operation->invoice_id);
+            $this->assertSame($service->id, $operation->service_id);
+            $this->assertNull($operation->supplier_service_link_id);
+            $this->assertSame('provision:service:'.$service->id, $operation->idempotency_key);
+
+            $payload = $operation->request_payload;
+            $this->assertSame([
+                'invoice_id' => $invoice->id,
+                'order_id' => $invoice->order_id,
+                'order_item_id' => $operation->order_item_id,
+                'service_id' => $service->id,
+                'unit_index' => $service->unit_index,
+            ], $payload['local']);
+            $this->assertSame(2, $payload['version']);
+            $this->assertSame($mappingOptions, $payload['route']['mapping']['options']);
+            $this->assertSame($product->id, $payload['route']['local']['product_id']);
+            $this->assertSame('monthly', $payload['route']['local']['billing_cycle']);
+            $this->assertSame('upstream-provision', $payload['route']['upstream']['product_id']);
+            $this->assertSame('month', $payload['route']['upstream']['billing_cycle']);
+            $this->assertSame(1, $payload['route']['upstream']['qty']);
+            $this->assertSame($mappingOptions, $payload['route']['upstream']['options']);
+            $this->assertSame([
+                'image' => 'ubuntu',
+                'region' => 'upstream',
+            ], $payload['route']['upstream']['configoption']);
+            $this->assertSame('30.00', $payload['route']['upstream']['expected_amount']);
+            $this->assertSame('CNY', $payload['route']['upstream']['currency']);
+            $this->assertArrayNotHasKey('configuration', $payload['route']['upstream']);
+            $this->assertStringNotContainsString('customer', json_encode($payload, JSON_THROW_ON_ERROR));
+            $this->assertSame('https://billing.kjaiu.test', $payload['correlation']['downstream_url']);
+            $this->assertMatchesRegularExpression('/\A[0-9a-f]{32}\z/', $payload['correlation']['downstream_token']);
+            $this->assertGreaterThanOrEqual(100_000_000_000_000, $payload['correlation']['downstream_id']);
+            $this->assertLessThanOrEqual(999_999_999_999_999, $payload['correlation']['downstream_id']);
+            $this->assertSame(hash('sha256', json_encode(
+                $payload,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+            )), $operation->request_hash);
+            $tokens[] = $payload['correlation']['downstream_token'];
+            $downstreamIds[] = $payload['correlation']['downstream_id'];
+        }
+        $this->assertCount(2, array_unique($tokens));
+        $this->assertCount(2, array_unique($downstreamIds));
+
+        $firstService = $services->first();
+        $firstOperation = $operations->get($firstService->id);
+        $reused = DB::transaction(fn () => app(SupplierProvisioningOutbox::class)->queueProvision(
+            $invoice->fresh('order'),
+            $orderItem,
+            $firstService,
+            $route,
+        ));
+        $this->assertSame($firstOperation->id, $reused->id);
+
+        $this->billing->payWithCredit($this->user->fresh(), $invoice->fresh());
+        $this->assertDatabaseCount('supplier_operations', 2);
+        $this->assertDatabaseCount('jobs', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_mapped_checkout_rejects_forged_configuration_before_invoice_or_stock_reservation(): void
+    {
+        $product = $this->product('Mapped configured compute', '45.00', 5, true);
+        $this->supplierMapping($product, 'configured', [
+            'configoption' => ['cpu' => 2, 'image' => 'ubuntu'],
+        ]);
+        $forgedConfiguration = [
+            'cpu' => 128,
+            'license' => 'expensive-enterprise-license',
+        ];
+
+        $this->postJson('/v1/cart', [
+            'product_id' => $product->id,
+            'billingcycle' => 'monthly',
+            'qty' => 2,
+            'configoption' => $forgedConfiguration,
+        ], $this->headers())
+            ->assertJsonPath('status', 400)
+            ->assertJsonPath('msg', '当前上游映射商品暂不支持客户自定义配置');
+        $this->assertDatabaseCount('cart_items', 0);
+
+        CartItem::create([
+            'user_id' => $this->user->id,
+            'product_id' => $product->id,
+            'billing_cycle' => 'monthly',
+            'quantity' => 2,
+            'configuration' => $forgedConfiguration,
+        ]);
+
+        try {
+            $this->billing->checkout($this->user, null, 'forged-mapped-config', 'Credit');
+            $this->fail('Mapped customer configuration must be rejected inside checkout.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('configoption', $exception->errors());
+        }
+
+        $this->assertSame(5, $product->fresh()->quantity);
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('order_items', 0);
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('supplier_operations', 0);
+        $this->assertDatabaseHas('cart_items', [
+            'user_id' => $this->user->id,
+            'product_id' => $product->id,
+            'quantity' => 2,
+        ]);
+    }
+
+    public function test_unmapped_auto_setup_remains_synchronous(): void
+    {
+        Http::preventStrayRequests();
+        Carbon::setTestNow(Carbon::parse('2026-08-31 12:30:00'));
+        $product = $this->product('Local auto setup', '12.00', null, true, false);
+        CartItem::create([
+            'user_id' => $this->user->id,
+            'product_id' => $product->id,
+            'billing_cycle' => 'monthly',
+            'quantity' => 1,
+        ]);
+
+        $invoice = $this->billing->checkout($this->user, null, 'local-auto-setup', 'Credit');
+        $this->billing->payWithCredit($this->user, $invoice);
+
+        $service = Service::query()->sole();
+        $this->assertSame('Active', $service->status);
+        $this->assertSame('2026-08-31 12:30:00', $service->activated_at->format('Y-m-d H:i:s'));
+        $this->assertSame(31, $service->billing_anchor_day);
+        $this->assertSame('2026-09-30 12:30:00', $service->next_due_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('supplier_operations', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_mapping_added_after_checkout_cannot_change_local_settlement(): void
+    {
+        Http::preventStrayRequests();
+        $product = $this->product('Late mapped local service', '12.00', null, true, false);
+        CartItem::create([
+            'user_id' => $this->user->id,
+            'product_id' => $product->id,
+            'billing_cycle' => 'monthly',
+            'quantity' => 1,
+        ]);
+
+        $invoice = $this->billing->checkout($this->user, null, 'late-mapping', 'Credit');
+        $this->assertDatabaseCount('supplier_order_item_routes', 0);
+        $this->supplierMapping($product, 'late-mapping');
+
+        $this->billing->payWithCredit($this->user, $invoice);
+
+        $this->assertSame('Active', Service::query()->sole()->status);
+        $this->assertDatabaseCount('supplier_order_item_routes', 0);
+        $this->assertDatabaseCount('supplier_operations', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_mapped_renewal_is_blocked_without_charging_or_consuming_existing_queue(): void
+    {
+        Http::preventStrayRequests();
+        Carbon::setTestNow(Carbon::parse('2026-08-26 12:30:00'));
+        $product = $this->product('Mapped renewal', '25.00', null, true, false);
+        $mapping = $this->supplierMapping($product, 'renewal');
+        $service = Service::create([
+            'user_id' => $this->user->id,
+            'product_id' => $product->id,
+            'name' => 'Mapped suspended service',
+            'status' => 'Suspended',
+            'billing_cycle' => 'monthly',
+            'billing_anchor_day' => 31,
+            'renew_amount' => '19.00',
+            'next_due_at' => Carbon::parse('2026-09-30 12:00:00'),
+        ]);
+        $serviceLink = SupplierServiceLink::createFor(
+            $mapping->account,
+            $service,
+            $mapping,
+            ['upstream_service_id' => 'host-renewal-42', 'upstream_status' => 'Active'],
+        );
+
+        $paidInvoice = Invoice::create([
+            'user_id' => $this->user->id,
+            'number' => 'LEGACY-SUPPLIER-RENEWAL-PAID',
+            'status' => 'Paid',
+            'total' => '25.00',
+            'paid_at' => now()->subMinute(),
+        ]);
+        $queuedRenewal = SupplierOperation::createFor(
+            account: $mapping->account,
+            attributes: [
+                'action' => SupplierOperation::ACTION_RENEW,
+                'status' => SupplierOperation::STATUS_QUEUED,
+                'step' => 'queued',
+                'idempotency_key' => 'legacy-renew:service:'.$service->id,
+                'request_payload' => ['version' => 1, 'action' => SupplierOperation::ACTION_RENEW],
+                'attempts' => 0,
+                'available_at' => now(),
+            ],
+            productMapping: $mapping,
+            invoice: $paidInvoice,
+            service: $service,
+            serviceLink: $serviceLink,
+        );
+
+        try {
+            $this->billing->createRenewalInvoice($this->user, $service, 'monthly');
+            $this->fail('Supplier-linked renewal invoice creation must be disabled.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                '当前版本暂不支持上游供应商服务续费',
+                $exception->errors()['service'][0],
+            );
+        }
+
+        $unpaidInvoice = Invoice::create([
+            'user_id' => $this->user->id,
+            'number' => 'LEGACY-SUPPLIER-RENEWAL-UNPAID',
+            'renewal_key' => hash('sha256', 'legacy-supplier-renewal-unpaid'),
+            'renewal_due_at' => $service->next_due_at,
+            'status' => 'Unpaid',
+            'subtotal' => '25.00',
+            'total' => '25.00',
+        ]);
+        $unpaidInvoice->items()->create([
+            'service_id' => $service->id,
+            'type' => 'renew',
+            'rel_id' => $service->id,
+            'billing_cycle' => 'monthly',
+            'description' => 'Legacy supplier renewal',
+            'amount' => '25.00',
+        ]);
+
+        try {
+            $this->billing->prepareGatewayPayment($this->user, $unpaidInvoice, 'BankTransfer');
+            $this->fail('A supplier renewal invoice must not be sent to an external gateway.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                '当前版本暂不支持上游供应商服务续费',
+                $exception->errors()['service'][0],
+            );
+        }
+        $this->assertNull($unpaidInvoice->fresh()->payment_method);
+
+        try {
+            $this->billing->payWithCredit($this->user, $unpaidInvoice);
+            $this->fail('A legacy supplier renewal invoice must not charge the customer.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                '当前版本暂不支持上游供应商服务续费',
+                $exception->errors()['service'][0],
+            );
+        }
+
+        try {
+            $this->billing->recordPayment(
+                $unpaidInvoice,
+                'BankTransfer',
+                'legacy-supplier-renewal-payment',
+            );
+            $this->fail('A supplier renewal invoice must not be recorded as externally paid.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                '当前版本暂不支持上游供应商服务续费',
+                $exception->errors()['service'][0],
+            );
+        }
+
+        $this->assertSame('500.00', $this->user->fresh()->credit);
+        $this->assertSame('Unpaid', $unpaidInvoice->fresh()->status);
+        $this->assertSame('0.00', $unpaidInvoice->fresh()->credit);
+        $this->assertSame('Suspended', $service->fresh()->status);
+        $this->assertSame('19.00', $service->fresh()->renew_amount);
+        $this->assertSame(
+            '2026-09-30 12:00:00',
+            $service->fresh()->next_due_at->format('Y-m-d H:i:s'),
+        );
+        $this->assertSame(SupplierOperation::STATUS_QUEUED, $queuedRenewal->fresh()->status);
+        $this->assertSame(0, $queuedRenewal->fresh()->attempts);
+        $this->assertDatabaseCount('transactions', 0);
+        $this->assertDatabaseCount('supplier_operations', 1);
+        Http::assertNothingSent();
     }
 
     public function test_cancellation_restores_only_snapshotted_inventory_once(): void
@@ -188,7 +558,7 @@ class BillingServiceTest extends TestCase
         try {
             $this->billing->createRenewalInvoice($this->user, $service, 'annually');
             $this->fail('A different cycle must not reuse the current renewal invoice.');
-        } catch (\Illuminate\Validation\ValidationException $exception) {
+        } catch (ValidationException $exception) {
             $this->assertArrayHasKey('billing_cycle', $exception->errors());
         }
         $this->assertSame(
@@ -369,6 +739,39 @@ class BillingServiceTest extends TestCase
             'quantity' => $stockControl ? $quantity : null,
             'auto_setup' => $autoSetup,
             'is_active' => true,
+        ]);
+    }
+
+    private function supplierMapping(
+        Product $product,
+        string $suffix,
+        array $options = [],
+    ): SupplierProductMapping {
+        $account = SupplierAccount::create([
+            'code' => 'supplier-'.$suffix.'-'.bin2hex(random_bytes(4)),
+            'name' => 'Supplier '.$suffix,
+            'base_url' => 'https://supplier.test',
+            'credentials' => ['username' => 'api-user', 'password' => 'api-secret'],
+        ]);
+        $catalog = SupplierCatalogProduct::createForAccount($account, [
+            'upstream_product_id' => 'upstream-'.$suffix,
+            'name' => 'Upstream '.$suffix,
+            'currency' => 'CNY',
+            'billing_cycles' => ['month'],
+            'metadata' => [
+                'prices' => [
+                    'month' => [
+                        'price' => (string) $product->price,
+                        'setup_fee' => (string) $product->setup_fee,
+                    ],
+                ],
+            ],
+        ]);
+
+        return SupplierProductMapping::createFor($account, $catalog, $product, [
+            'local_billing_cycle' => 'monthly',
+            'upstream_billing_cycle' => 'month',
+            'options' => $options,
         ]);
     }
 

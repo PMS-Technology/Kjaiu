@@ -33,6 +33,16 @@ class Product extends Model
         return $this->hasMany(ProductPrice::class);
     }
 
+    public function supplierMappings()
+    {
+        return $this->hasMany(SupplierProductMapping::class);
+    }
+
+    public function supplierOrderItemRoutes()
+    {
+        return $this->hasMany(SupplierOrderItemRoute::class, 'local_product_id');
+    }
+
     public function priceFor(string $billingCycle): ?ProductPrice
     {
         if ($billingCycle === $this->billing_cycle) {

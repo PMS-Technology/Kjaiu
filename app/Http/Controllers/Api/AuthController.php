@@ -6,8 +6,10 @@ use App\Models\User;
 use App\Services\JwtService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class AuthController extends ApiController
 {
@@ -57,7 +59,13 @@ class AuthController extends ApiController
 
     public function logout(Request $request): JsonResponse
     {
-        $request->user()->increment('token_version');
+        DB::transaction(function () use ($request): void {
+            $user = User::query()->lockForUpdate()->findOrFail($request->user()->id);
+            $user->forceFill([
+                'token_version' => $user->token_version + 1,
+                'remember_token' => Str::random(60),
+            ])->save();
+        }, 3);
 
         return $this->success([], '退出成功');
     }

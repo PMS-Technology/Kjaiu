@@ -32,12 +32,16 @@
 
         <div class="service-grid">
             @forelse($services as $service)
-                @php($expiring = $service->next_due_at && $service->next_due_at->between(now(), now()->addDays(7)))
+                @php
+                    $expiring = $service->next_due_at && $service->next_due_at->between(now(), now()->addDays(7));
+                    $supplierManaged = $service->has_supplier_service_link || $service->has_nonterminal_supplier_operation;
+                    $serviceStatusLabel = ['Pending'=>'待交付','Active'=>'运行中','Suspended'=>'已暂停','Cancelled'=>'已取消','Deleted'=>'已删除','Failed'=>'交付失败'][$service->status] ?? $service->status;
+                @endphp
                 <article class="service-card">
                     <header>
                         <div class="service-symbol">{{ strtoupper(mb_substr($service->type, 0, 2)) }}</div>
                         <div class="service-title"><span>{{ $service->product?->name ?? $service->type }}</span><h2>{{ $service->name }}</h2><p>#{{ $service->id }} · {{ $service->user?->name }}</p></div>
-                        <span class="status status-{{ strtolower($service->status) }}">{{ ['Pending'=>'待交付','Active'=>'运行中','Suspended'=>'已暂停','Cancelled'=>'已取消','Deleted'=>'已删除','Failed'=>'交付失败'][$service->status] ?? $service->status }}</span>
+                        <span class="status status-{{ strtolower($service->status) }}">{{ $serviceStatusLabel }}</span>
                     </header>
                     <div class="service-facts">
                         <div><span>主 IP</span><strong>{{ $service->dedicated_ip ?: '尚未分配' }}</strong></div>
@@ -55,16 +59,20 @@
                     <form method="POST" action="{{ route('admin.services.update', $service) }}">
                         @csrf @method('PUT')
                         <input type="hidden" name="_service_id" value="{{ $service->id }}">
-                        <header class="modal-head"><div><p class="panel-kicker">SERVICE #{{ $service->id }}</p><h2>更新交付状态</h2></div><button type="button" data-dialog-close aria-label="关闭">×</button></header>
+                        <header class="modal-head"><div><p class="panel-kicker">SERVICE #{{ $service->id }}</p><h2>{{ $supplierManaged ? '更新服务信息' : '更新交付状态' }}</h2></div><button type="button" data-dialog-close aria-label="关闭">×</button></header>
                         <div class="modal-body">
                             <div class="service-modal-summary"><span class="service-symbol">{{ strtoupper(mb_substr($service->type, 0, 2)) }}</span><div><strong>{{ $service->name }}</strong><p>{{ $service->user?->name }} · {{ $service->user?->email }}</p></div></div>
                             <div class="form-grid">
-                                <label class="field"><span>服务状态</span><select name="status" required>@foreach(['Pending'=>'待交付','Active'=>'运行中','Suspended'=>'已暂停','Cancelled'=>'已取消','Deleted'=>'已删除','Failed'=>'交付失败'] as $value => $label)@if(in_array($value, $transitions[$service->status] ?? [$service->status], true))<option value="{{ $value }}" @selected(old('_service_id') == $service->id ? old('status') === $value : $service->status === $value)>{{ $label }}</option>@endif @endforeach</select></label>
+                                @if($supplierManaged)
+                                    <label class="field field-full"><span>服务状态 <small>只读</small></span><input value="{{ $serviceStatusLabel }}" readonly aria-readonly="true"><small class="field-hint">该服务由供应商上游状态与对账流程控制，通用服务管理不能修改状态。@if(Route::has('admin.supplier-operations.index')) <a href="{{ route('admin.supplier-operations.index') }}">查看上游操作</a>@endif</small></label>
+                                @else
+                                    <label class="field"><span>服务状态</span><select name="status" required>@foreach(['Pending'=>'待交付','Active'=>'运行中','Suspended'=>'已暂停','Cancelled'=>'已取消','Deleted'=>'已删除','Failed'=>'交付失败'] as $value => $label)@if(in_array($value, $transitions[$service->status] ?? [$service->status], true))<option value="{{ $value }}" @selected(old('_service_id') == $service->id ? old('status') === $value : $service->status === $value)>{{ $label }}</option>@endif @endforeach</select></label>
+                                @endif
                                 <label class="field"><span>主 IP <small>选填</small></span><input name="dedicated_ip" value="{{ old('_service_id') == $service->id ? old('dedicated_ip') : $service->dedicated_ip }}" placeholder="192.0.2.1"></label>
                                 <label class="field field-full"><span>内部运营备注</span><textarea name="internal_notes" rows="4" maxlength="5000" placeholder="交付信息、暂停原因或其他内部记录，不向客户展示">{{ old('_service_id') == $service->id ? old('internal_notes') : $service->internal_notes }}</textarea></label>
                             </div>
                         </div>
-                        <footer class="modal-foot"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit">保存状态</button></footer>
+                        <footer class="modal-foot"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit">{{ $supplierManaged ? '保存信息' : '保存状态' }}</button></footer>
                     </form>
                 </dialog>
             @empty

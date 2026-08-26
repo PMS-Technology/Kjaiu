@@ -32,7 +32,7 @@
                 <div class="login-intro">
                     <p class="eyebrow">SECURE CONSOLE</p>
                     <h2>欢迎回来</h2>
-                    <p>使用管理员账户进入 Kjaiu 运营工作台。</p>
+                    <p>使用你的账户进入 Kjaiu 服务与运营工作台。</p>
                 </div>
 
                 @if ($errors->any())
@@ -42,7 +42,7 @@
                 <form class="auth-form" method="POST" action="{{ route('login.store') }}">
                     @csrf
                     <label class="field">
-                        <span>管理员邮箱</span>
+                        <span>账户邮箱</span>
                         <input type="email" name="email" value="{{ old('email') }}" maxlength="191" autocomplete="username" placeholder="name@company.com" required autofocus>
                     </label>
                     <label class="field">

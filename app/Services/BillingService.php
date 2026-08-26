@@ -7,9 +7,12 @@ use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Models\ProductGroup;
+use App\Models\ProductPrice;
 use App\Models\Service;
 use App\Models\Transaction;
 use App\Models\User;
+use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -20,8 +23,12 @@ class BillingService
 {
     private const MAX_DATABASE_AMOUNT_MINOR = 999_999_999_999_999_999;
 
+    public function __construct(
+        private readonly SupplierProvisioningOutbox $supplierOutbox,
+    ) {}
+
     /**
-     * @param array<int, int>|null $positions Zero-based cart positions.
+     * @param  array<int, int>|null  $positions  Zero-based cart positions.
      */
     public function checkout(
         User $user,
@@ -78,18 +85,43 @@ class BillingService
             $products = Product::query()
                 ->whereIn('id', $productIds)
                 ->orderBy('id')
-                ->with('prices')
                 ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
+            $this->lockCheckoutEligibility($products);
+            $prices = ProductPrice::query()
+                ->whereIn('product_id', $productIds)
+                ->orderBy('product_id')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->groupBy('product_id');
+            foreach ($products as $product) {
+                $product->setRelation('prices', $prices->get($product->id, collect()));
+            }
+
+            try {
+                $mappings = $this->supplierOutbox->activeMappings($selectedItems
+                    ->map(fn (CartItem $item): array => [
+                        'product_id' => (int) $item->product_id,
+                        'billing_cycle' => (string) $item->billing_cycle,
+                    ])
+                    ->all());
+            } catch (DomainException $exception) {
+                throw ValidationException::withMessages(['product_id' => $exception->getMessage()]);
+            }
 
             $lines = [];
             $reservations = [];
             $subtotalMinor = 0;
+            $currency = strtoupper((string) config('kjaiu.currency.code', 'CNY'));
 
             foreach ($selectedItems as $cartItem) {
                 $product = $products->get($cartItem->product_id);
-                if (! $product || ! $product->is_active) {
+                if (! $product
+                    || ! $product->is_active
+                    || ! $product->group?->is_active
+                    || ! $product->group?->parent?->is_active) {
                     throw ValidationException::withMessages(['product_id' => '商品不存在或已下架']);
                 }
 
@@ -97,6 +129,21 @@ class BillingService
                 if (! $price || ! $price->is_active) {
                     throw ValidationException::withMessages(['billing_cycle' => '商品不支持该付款周期']);
                 }
+
+                $configuration = $cartItem->configuration;
+                $hasConfiguration = is_array($configuration)
+                    ? $configuration !== []
+                    : $configuration !== null;
+                $mapping = $mappings[$this->supplierMappingKey(
+                    (int) $product->id,
+                    (string) $cartItem->billing_cycle,
+                )] ?? null;
+                if ($hasConfiguration && $mapping !== null) {
+                    throw ValidationException::withMessages([
+                        'configoption' => '当前上游映射商品暂不支持客户自定义配置',
+                    ]);
+                }
+                $configuration = is_array($configuration) ? $configuration : [];
 
                 $quantity = (int) $cartItem->quantity;
                 if ($quantity < 1 || $quantity > 100) {
@@ -128,7 +175,8 @@ class BillingService
                     'unitMinor' => $unitMinor,
                     'setupMinor' => $setupMinor,
                     'amountMinor' => $amountMinor,
-                    'configuration' => is_array($cartItem->configuration) ? $cartItem->configuration : [],
+                    'configuration' => $configuration,
+                    'mapping' => $mapping,
                 ];
             }
 
@@ -142,7 +190,6 @@ class BillingService
                 $product->save();
             }
 
-            $currency = (string) config('kjaiu.currency.code', 'CNY');
             $order = Order::create([
                 'user_id' => $lockedUser->id,
                 'status' => 'Pending',
@@ -177,6 +224,19 @@ class BillingService
                     'amount' => Money::format($line['amountMinor']),
                     'configuration' => $line['configuration'],
                 ]);
+                if ($line['mapping'] !== null) {
+                    try {
+                        $this->supplierOutbox->freezeRoute(
+                            $orderItem,
+                            $line['mapping'],
+                            $currency,
+                        );
+                    } catch (DomainException $exception) {
+                        throw ValidationException::withMessages([
+                            'product_id' => $exception->getMessage(),
+                        ]);
+                    }
+                }
 
                 $unitAmountMinor = $line['unitMinor'] + $line['setupMinor'];
                 for ($index = 0; $index < $line['quantity']; $index++) {
@@ -227,6 +287,7 @@ class BillingService
             if ($lockedInvoice->items->contains('type', 'recharge')) {
                 throw ValidationException::withMessages(['invoice' => '充值账单不能使用余额支付']);
             }
+            $this->ensureRenewalPaymentAvailable($lockedInvoice, $lockedUser);
 
             $amountMinor = Money::toMinor($lockedInvoice->total);
             $balanceMinor = Money::toMinor($lockedUser->credit);
@@ -272,6 +333,9 @@ class BillingService
                 throw ValidationException::withMessages(['invoice' => '当前账单状态不可支付']);
             }
 
+            $lockedInvoice->load('items');
+            $this->ensureRenewalPaymentAvailable($lockedInvoice, $lockedUser);
+
             $lockedInvoice->payment_method = $gateway;
             $lockedInvoice->save();
 
@@ -287,8 +351,7 @@ class BillingService
         string $gateway,
         ?string $transactionNumber = null,
         ?bool &$changed = null,
-    ): Invoice
-    {
+    ): Invoice {
         $changed = false;
         $gateway = trim($gateway);
         if ($gateway === '' || mb_strlen($gateway) > 64) {
@@ -339,6 +402,7 @@ class BillingService
                 if ($lockedInvoice->status !== 'Unpaid') {
                     throw ValidationException::withMessages(['invoice' => '当前账单状态不可入账']);
                 }
+                $this->ensureRenewalPaymentAvailable($lockedInvoice, $user);
 
                 $amountMinor = Money::toMinor($lockedInvoice->total);
                 $balanceBefore = Money::toMinor($user->credit);
@@ -539,77 +603,207 @@ class BillingService
             $this->ensureActiveUser($lockedUser);
             $lockedService = Service::query()->lockForUpdate()->findOrFail($service->id);
 
-            if ($lockedService->user_id !== $lockedUser->id
-                || ! in_array($lockedService->status, ['Active', 'Suspended'], true)) {
-                throw ValidationException::withMessages(['service' => '产品不可续费']);
-            }
-
-            if ($this->nextDueAt(now(), $billingCycle, $lockedService->billing_anchor_day) === null) {
-                throw ValidationException::withMessages(['billing_cycle' => '该付款周期不可续费']);
-            }
-
-            $renewalDueAt = $lockedService->next_due_at?->copy();
-            $renewalKey = hash('sha256', implode('|', [
-                (string) $lockedService->id,
-                $renewalDueAt?->copy()->utc()->format('Y-m-d H:i:s') ?? 'none',
-            ]));
-            $existing = Invoice::query()->where('renewal_key', $renewalKey)->with('items')->first();
-            if ($existing) {
-                if ($existing->items->firstWhere('type', 'renew')?->billing_cycle !== $billingCycle) {
-                    throw ValidationException::withMessages([
-                        'billing_cycle' => '当前到期周期已有其他续费账单，请先取消原账单',
-                    ]);
-                }
-
-                return $existing;
-            }
-
-            $product = Product::query()
-                ->whereKey($lockedService->product_id)
-                ->with('prices')
-                ->lockForUpdate()
-                ->first();
-            $price = $product?->priceFor($billingCycle);
-            if (! $price || ! $price->is_active) {
-                throw ValidationException::withMessages(['billing_cycle' => '产品不支持该续费周期']);
-            }
-
-            $amountMinor = Money::toMinor($price->price);
-            $invoice = Invoice::create([
-                'user_id' => $lockedUser->id,
-                'number' => $this->invoiceNumber(),
-                'renewal_key' => $renewalKey,
-                'renewal_due_at' => $renewalDueAt,
-                'status' => 'Unpaid',
-                'subtotal' => Money::format($amountMinor),
-                'total' => Money::format($amountMinor),
-                'currency' => (string) config('kjaiu.currency.code', 'CNY'),
-                'due_at' => now()->addDay(),
-            ]);
-
-            $invoice->items()->create([
-                'service_id' => $lockedService->id,
-                'type' => 'renew',
-                'rel_id' => $lockedService->id,
-                'billing_cycle' => $billingCycle,
-                'description' => "{$lockedService->name} - 续费 {$billingCycle}",
-                'amount' => Money::format($amountMinor),
-            ]);
-
-            return $invoice->fresh('items');
+            return $this->createRenewalInvoiceForLockedService(
+                $lockedUser,
+                $lockedService,
+                $billingCycle,
+            );
         }, 3);
+    }
+
+    public function autoRenewDueService(Service $service): Invoice
+    {
+        return DB::transaction(function () use ($service) {
+            $lockedUser = User::query()->lockForUpdate()->find($service->user_id);
+            if (! $lockedUser) {
+                throw ValidationException::withMessages(['service' => '服务不符合自动续费条件']);
+            }
+            $this->ensureActiveUser($lockedUser);
+
+            $lockedService = Service::query()->lockForUpdate()->find($service->id);
+            if (! $lockedService
+                || $lockedService->user_id !== $lockedUser->id
+                || ! $lockedService->auto_renew
+                || $lockedService->status !== 'Active'
+                || ! $lockedService->next_due_at
+                || $lockedService->next_due_at->isAfter(now())) {
+                throw ValidationException::withMessages(['service' => '服务不符合自动续费条件']);
+            }
+
+            $invoice = $this->createRenewalInvoiceForLockedService(
+                $lockedUser,
+                $lockedService,
+                (string) $lockedService->billing_cycle,
+                fn (int $amountMinor) => $this->sufficientCreditBalance(
+                    $lockedUser,
+                    $amountMinor,
+                ),
+            );
+            if ($invoice->status === 'Paid') {
+                return $invoice->fresh(['items', 'transactions']);
+            }
+
+            $lockedInvoice = Invoice::query()
+                ->with('items')
+                ->lockForUpdate()
+                ->find($invoice->id);
+            if (! $lockedInvoice || $lockedInvoice->user_id !== $lockedUser->id) {
+                throw ValidationException::withMessages(['invoice' => '账单不存在']);
+            }
+            if ($lockedInvoice->status !== 'Unpaid') {
+                throw ValidationException::withMessages(['invoice' => '当前账单状态不可支付']);
+            }
+
+            $this->ensureRenewalPaymentAvailable($lockedInvoice, $lockedUser);
+
+            $amountMinor = Money::toMinor($lockedInvoice->total);
+            $balanceMinor = $this->sufficientCreditBalance($lockedUser, $amountMinor);
+
+            $lockedUser->credit = Money::format($balanceMinor - $amountMinor);
+            $lockedUser->save();
+
+            $lockedInvoice->credit = Money::format($amountMinor);
+            $lockedInvoice->save();
+
+            $this->createTransaction(
+                $lockedUser,
+                $lockedInvoice,
+                'payment',
+                'Credit',
+                0,
+                $amountMinor,
+                $balanceMinor,
+                $balanceMinor - $amountMinor,
+            );
+
+            return $this->settleLockedInvoice($lockedInvoice, $lockedUser, 'Credit');
+        }, 3);
+    }
+
+    private function createRenewalInvoiceForLockedService(
+        User $user,
+        Service $service,
+        string $billingCycle,
+        ?callable $beforeCreate = null,
+    ): Invoice {
+        if ($service->user_id !== $user->id
+            || ! in_array($service->status, ['Active', 'Suspended'], true)) {
+            throw ValidationException::withMessages(['service' => '产品不可续费']);
+        }
+
+        $price = $this->renewalPriceForLockedService($service, $billingCycle);
+        $this->ensureLocalRenewalAvailable($service, $billingCycle);
+
+        if ($this->nextDueAt(now(), $billingCycle, $service->billing_anchor_day) === null) {
+            throw ValidationException::withMessages(['billing_cycle' => '该付款周期不可续费']);
+        }
+
+        $renewalDueAt = $service->next_due_at?->copy();
+        $renewalKey = hash('sha256', implode('|', [
+            (string) $service->id,
+            $renewalDueAt?->copy()->utc()->format('Y-m-d H:i:s') ?? 'none',
+        ]));
+        $existing = Invoice::query()
+            ->where('renewal_key', $renewalKey)
+            ->with('items')
+            ->lockForUpdate()
+            ->first();
+        if ($existing) {
+            if ($existing->items->firstWhere('type', 'renew')?->billing_cycle !== $billingCycle) {
+                throw ValidationException::withMessages([
+                    'billing_cycle' => '当前到期周期已有其他续费账单，请先取消原账单',
+                ]);
+            }
+
+            return $existing;
+        }
+
+        $amountMinor = Money::toMinor($price->price);
+        $beforeCreate?->__invoke($amountMinor);
+        $invoice = Invoice::create([
+            'user_id' => $user->id,
+            'number' => $this->invoiceNumber(),
+            'renewal_key' => $renewalKey,
+            'renewal_due_at' => $renewalDueAt,
+            'status' => 'Unpaid',
+            'subtotal' => Money::format($amountMinor),
+            'total' => Money::format($amountMinor),
+            'currency' => (string) config('kjaiu.currency.code', 'CNY'),
+            'due_at' => now()->addDay(),
+        ]);
+
+        $invoice->items()->create([
+            'service_id' => $service->id,
+            'type' => 'renew',
+            'rel_id' => $service->id,
+            'billing_cycle' => $billingCycle,
+            'description' => "{$service->name} - 续费 {$billingCycle}",
+            'amount' => Money::format($amountMinor),
+        ]);
+
+        return $invoice->fresh('items');
+    }
+
+    private function renewalPriceForLockedService(Service $service, string $billingCycle): ProductPrice
+    {
+        $product = Product::query()->lockForUpdate()->find($service->product_id);
+        if (! $product || ! $product->is_active) {
+            throw ValidationException::withMessages([
+                'service' => '当前产品不存在或已停用，无法续费',
+            ]);
+        }
+
+        if ($product->billing_cycle === $billingCycle) {
+            return new ProductPrice([
+                'billing_cycle' => $product->billing_cycle,
+                'price' => $product->price,
+                'setup_fee' => $product->setup_fee,
+                'is_active' => true,
+            ]);
+        }
+
+        $price = ProductPrice::query()
+            ->where('product_id', $product->id)
+            ->where('billing_cycle', $billingCycle)
+            ->lockForUpdate()
+            ->first();
+        if (! $price || ! $price->is_active) {
+            throw ValidationException::withMessages(['billing_cycle' => '产品不支持该续费周期']);
+        }
+
+        return $price;
+    }
+
+    private function sufficientCreditBalance(User $user, int $amountMinor): int
+    {
+        $balanceMinor = Money::toMinor($user->credit);
+        if ($balanceMinor < $amountMinor) {
+            throw ValidationException::withMessages(['credit' => '账户余额不足']);
+        }
+
+        return $balanceMinor;
     }
 
     private function settleLockedInvoice(Invoice $invoice, User $user, string $gateway): Invoice
     {
-        $invoice->loadMissing(['items', 'order.items.product']);
+        $invoice->loadMissing(['items', 'order.items.product', 'order.items.supplierRoute']);
         $now = now();
 
         if ($invoice->order) {
             $invoice->order->update(['status' => 'Paid']);
             foreach ($invoice->order->items->sortBy('id') as $orderItem) {
+                $route = $orderItem->supplierRoute;
+                $configuration = $orderItem->configuration;
+                $hasConfiguration = is_array($configuration)
+                    ? $configuration !== []
+                    : $configuration !== null;
+                if ($route !== null && $hasConfiguration) {
+                    throw ValidationException::withMessages([
+                        'configoption' => '当前上游映射商品暂不支持客户自定义配置',
+                    ]);
+                }
                 for ($index = 0; $index < $orderItem->quantity; $index++) {
-                    $active = (bool) $orderItem->product?->auto_setup;
+                    $active = $route === null && (bool) $orderItem->product?->auto_setup;
                     $perServiceMinor = Money::toMinor($orderItem->unit_price)
                         + Money::toMinor($orderItem->setup_fee);
                     $serviceNumber = $this->serviceNumber();
@@ -625,10 +819,12 @@ class BillingService
                             'first_payment_amount' => Money::format($perServiceMinor),
                             'renew_amount' => $orderItem->unit_price,
                             'billing_cycle' => $orderItem->billing_cycle,
-                            'billing_anchor_day' => $now->day,
+                            'billing_anchor_day' => $route === null ? $now->day : null,
                             'registered_at' => $now,
                             'activated_at' => $active ? $now : null,
-                            'next_due_at' => $this->nextDueAt($now, $orderItem->billing_cycle, $now->day),
+                            'next_due_at' => $route === null
+                                ? $this->nextDueAt($now, $orderItem->billing_cycle, $now->day)
+                                : null,
                         ],
                     );
 
@@ -636,6 +832,10 @@ class BillingService
                         ->where('order_item_id', $orderItem->id)
                         ->where('unit_index', $index)
                         ->update(['service_id' => $service->id, 'rel_id' => $service->id]);
+
+                    if ($route !== null) {
+                        $this->supplierOutbox->queueProvision($invoice, $orderItem, $service, $route);
+                    }
                 }
             }
         }
@@ -653,6 +853,7 @@ class BillingService
             }
 
             $cycle = (string) ($item->billing_cycle ?: $service->billing_cycle);
+            $this->ensureLocalRenewalAvailable($service, $cycle);
             $base = $service->next_due_at && $service->next_due_at->isFuture()
                 ? $service->next_due_at
                 : $now;
@@ -800,6 +1001,70 @@ class BillingService
         }
 
         return $first->getTimestamp() === $second->getTimestamp();
+    }
+
+    private function ensureLocalRenewalAvailable(Service $service, string $billingCycle): void
+    {
+        try {
+            $this->supplierOutbox->ensureLocalRenewalAvailable($service, $billingCycle);
+        } catch (DomainException $exception) {
+            throw ValidationException::withMessages(['service' => $exception->getMessage()]);
+        }
+    }
+
+    private function ensureRenewalPaymentAvailable(Invoice $invoice, User $user): void
+    {
+        foreach ($invoice->items->where('type', 'renew')->sortBy('service_id') as $item) {
+            $service = Service::query()->lockForUpdate()->find($item->service_id ?: $item->rel_id);
+            if (! $service || $service->user_id !== $user->id
+                || ! in_array($service->status, ['Active', 'Suspended'], true)) {
+                throw ValidationException::withMessages(['service' => '关联服务当前不可续费']);
+            }
+
+            $cycle = (string) ($item->billing_cycle ?: $service->billing_cycle);
+            $this->ensureLocalRenewalAvailable($service, $cycle);
+        }
+    }
+
+    private function lockCheckoutEligibility($products): void
+    {
+        $groupIds = $products->pluck('product_group_id')->unique()->sort()->values();
+        $groupParents = ProductGroup::query()
+            ->whereIn('id', $groupIds)
+            ->orderBy('id')
+            ->get(['id', 'parent_id'])
+            ->keyBy('id');
+        $allGroupIds = $groupIds
+            ->merge($groupParents->pluck('parent_id')->filter())
+            ->unique()
+            ->sort()
+            ->values();
+        $groups = ProductGroup::query()
+            ->whereIn('id', $allGroupIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        foreach ($products as $product) {
+            $group = $groups->get($product->product_group_id);
+            $discoveredGroup = $groupParents->get($product->product_group_id);
+            if ($group === null
+                || $discoveredGroup === null
+                || (string) $group->parent_id !== (string) $discoveredGroup->parent_id) {
+                throw ValidationException::withMessages([
+                    'product_id' => '商品分组在结算期间发生变化，请重试',
+                ]);
+            }
+            $parent = $group?->parent_id === null ? null : $groups->get($group->parent_id);
+            $product->setRelation('group', $group);
+            $group?->setRelation('parent', $parent);
+        }
+    }
+
+    private function supplierMappingKey(int $productId, string $billingCycle): string
+    {
+        return $productId."\0".$billingCycle;
     }
 
     private function invoiceNumber(): string

@@ -41,4 +41,14 @@ class Service extends Model
     {
         return $this->belongsTo(OrderItem::class);
     }
+
+    public function supplierServiceLinks()
+    {
+        return $this->hasMany(SupplierServiceLink::class);
+    }
+
+    public function supplierOperations()
+    {
+        return $this->hasMany(SupplierOperation::class);
+    }
 }

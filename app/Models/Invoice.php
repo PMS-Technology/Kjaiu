@@ -39,4 +39,14 @@ class Invoice extends Model
     {
         return $this->hasMany(Transaction::class);
     }
+
+    public function supplierInvoiceLinks()
+    {
+        return $this->hasMany(SupplierInvoiceLink::class);
+    }
+
+    public function supplierOperations()
+    {
+        return $this->hasMany(SupplierOperation::class);
+    }
 }
