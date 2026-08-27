@@ -20,18 +20,86 @@ const closeDialog = (dialog) => {
     }
 };
 
+let confirmationDialog;
+let resolveConfirmation;
+let pendingConfirmation;
+let confirmationTrigger;
+
+const requestConfirmation = (message) => {
+    if (pendingConfirmation) return pendingConfirmation;
+
+    if (!confirmationDialog) {
+        confirmationDialog = document.createElement("dialog");
+        confirmationDialog.className = "modal confirmation-modal";
+        confirmationDialog.setAttribute(
+            "aria-labelledby",
+            "confirmation-title",
+        );
+        confirmationDialog.innerHTML = `
+            <div class="confirmation-mark" aria-hidden="true">?</div>
+            <div class="confirmation-copy">
+                <p class="panel-kicker">CONFIRM ACTION</p>
+                <h2 id="confirmation-title">请确认操作</h2>
+                <p data-confirmation-message></p>
+            </div>
+            <div class="modal-foot">
+                <button class="button button-ghost" type="button" data-confirmation-cancel>取消</button>
+                <button class="button button-primary" type="button" data-confirmation-accept>确认继续</button>
+            </div>
+        `;
+        document.body.append(confirmationDialog);
+
+        const finish = (confirmed) => {
+            closeDialog(confirmationDialog);
+            resolveConfirmation?.(confirmed);
+            resolveConfirmation = undefined;
+            pendingConfirmation = undefined;
+            confirmationTrigger?.focus();
+            confirmationTrigger = undefined;
+        };
+        confirmationDialog
+            .querySelector("[data-confirmation-cancel]")
+            .addEventListener("click", () => finish(false));
+        confirmationDialog
+            .querySelector("[data-confirmation-accept]")
+            .addEventListener("click", () => finish(true));
+        confirmationDialog.addEventListener("cancel", (event) => {
+            event.preventDefault();
+            finish(false);
+        });
+        confirmationDialog.addEventListener("click", (event) => {
+            if (event.target === confirmationDialog) finish(false);
+        });
+    }
+
+    confirmationDialog.querySelector(
+        "[data-confirmation-message]",
+    ).textContent = message;
+    confirmationTrigger = document.activeElement;
+    pendingConfirmation = new Promise((resolve) => {
+        resolveConfirmation = resolve;
+    });
+    openDialog(confirmationDialog);
+    confirmationDialog.querySelector("[data-confirmation-accept]").focus();
+
+    return pendingConfirmation;
+};
+
 const dirtyForms = new Set();
-const confirmDirtyNavigation = () => {
-    const dirty = [...dirtyForms].filter(
+const dirtyFormEntries = () =>
+    [...dirtyForms].filter(
         (form) =>
             form.dataset.dirty === "true" && form.dataset.submitting !== "true",
     );
+
+const confirmDirtyNavigation = async () => {
+    const dirty = dirtyFormEntries();
     if (!dirty.length) return true;
 
     const message =
         dirty[0].dataset.dirtyMessage ||
         "This form has unsaved changes. Leave anyway?";
-    if (!window.confirm(message)) return false;
+    if (!(await requestConfirmation(message))) return false;
 
     dirty.forEach((form) => {
         form.dataset.dirty = "false";
@@ -40,12 +108,14 @@ const confirmDirtyNavigation = () => {
     return true;
 };
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
     const navigation = event.target.closest(
         "a[href], [data-dialog-close], [data-dialog-open]",
     );
-    if (navigation && !confirmDirtyNavigation()) {
+    if (navigation && dirtyFormEntries().length) {
         event.preventDefault();
+        event.stopImmediatePropagation();
+        if (await confirmDirtyNavigation()) navigation.click();
         return;
     }
 
@@ -97,30 +167,43 @@ document.querySelectorAll("dialog[open]").forEach((dialog) => {
 });
 
 document.querySelectorAll("dialog").forEach((dialog) => {
-    dialog.addEventListener("click", (event) => {
-        if (event.target === dialog && confirmDirtyNavigation())
-            closeDialog(dialog);
+    dialog.addEventListener("click", async (event) => {
+        if (event.target !== dialog) return;
+
+        if (await confirmDirtyNavigation()) closeDialog(dialog);
     });
-    dialog.addEventListener("cancel", (event) => {
-        if (!confirmDirtyNavigation()) event.preventDefault();
+    dialog.addEventListener("cancel", async (event) => {
+        if (!dirtyFormEntries().length) return;
+
+        event.preventDefault();
+        if (await confirmDirtyNavigation()) closeDialog(dialog);
     });
 });
 
 document.querySelectorAll("form[data-confirm]").forEach((form) => {
-    form.addEventListener("submit", (event) => {
+    form.addEventListener("submit", async (event) => {
         if (form.dataset.submitting === "true") {
             event.preventDefault();
             return;
         }
-        if (!window.confirm(form.dataset.confirm)) {
-            event.preventDefault();
+        if (form.dataset.confirmed === "true") {
+            delete form.dataset.confirmed;
+            form.dataset.submitting = "true";
+            form.querySelectorAll('button[type="submit"]').forEach((button) => {
+                button.disabled = true;
+            });
             return;
         }
 
-        form.dataset.submitting = "true";
-        form.querySelectorAll('button[type="submit"]').forEach((button) => {
-            button.disabled = true;
-        });
+        event.preventDefault();
+        if (!(await requestConfirmation(form.dataset.confirm))) return;
+
+        form.dataset.confirmed = "true";
+        if (event.submitter) {
+            form.requestSubmit(event.submitter);
+        } else {
+            form.requestSubmit();
+        }
     });
 });
 
@@ -134,6 +217,29 @@ document.querySelectorAll("[data-stock-toggle]").forEach((toggle) => {
 
     toggle.addEventListener("change", sync);
     sync();
+});
+
+document.querySelectorAll("[data-select-all]").forEach((toggle) => {
+    const name = toggle.dataset.selectAll;
+    const items = document.querySelectorAll(`[data-select-item="${name}"]`);
+    toggle.addEventListener("change", () => {
+        items.forEach((item) => {
+            if (!item.disabled) item.checked = toggle.checked;
+        });
+    });
+    items.forEach((item) => {
+        item.addEventListener("change", () => {
+            const enabled = [...items].filter(
+                (candidate) => !candidate.disabled,
+            );
+            toggle.checked =
+                enabled.length > 0 &&
+                enabled.every((candidate) => candidate.checked);
+            toggle.indeterminate =
+                enabled.some((candidate) => candidate.checked) &&
+                !toggle.checked;
+        });
+    });
 });
 
 document.querySelectorAll("form[data-dirty-guard]").forEach((form) => {
@@ -153,11 +259,4 @@ document.querySelectorAll("form[data-dirty-guard]").forEach((form) => {
             dirtyForms.delete(form);
         });
     });
-});
-
-window.addEventListener("beforeunload", (event) => {
-    if (!dirtyForms.size) return;
-
-    event.preventDefault();
-    event.returnValue = "";
 });

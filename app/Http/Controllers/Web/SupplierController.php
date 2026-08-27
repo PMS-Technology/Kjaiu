@@ -7,12 +7,14 @@ use App\Integrations\Idcsmart\FinanceClient;
 use App\Integrations\Idcsmart\FinanceException;
 use App\Models\AuditLog;
 use App\Models\Product;
+use App\Models\ProductGroup;
 use App\Models\ProductPrice;
 use App\Models\SupplierAccount;
 use App\Models\SupplierCatalogProduct;
 use App\Models\SupplierErrorSanitizer;
 use App\Models\SupplierProductMapping;
 use App\Models\User;
+use App\Services\SupplierCatalogImportService;
 use App\Services\SupplierCatalogSyncService;
 use DomainException;
 use Illuminate\Contracts\Encryption\DecryptException;
@@ -323,6 +325,71 @@ class SupplierController extends Controller
 
         return redirect()->route('admin.suppliers.index')
             ->with('success', '上游供应商账户已创建');
+    }
+
+    public function catalog(Request $request, SupplierAccount $supplier): View
+    {
+        $this->requireSupportedAccount($supplier);
+        $keyword = trim((string) $request->query('q'));
+        $catalogProducts = $supplier->catalogProducts()
+            ->with('catalogImport.product')
+            ->when($keyword !== '', fn ($query) => $query->where(function ($search) use ($keyword): void {
+                $search->where('name', 'like', "%$keyword%")
+                    ->orWhere('upstream_product_id', 'like', "%$keyword%")
+                    ->orWhere('upstream_group_id', 'like', "%$keyword%");
+            }))
+            ->orderByDesc('is_active')
+            ->orderBy('name')
+            ->orderBy('id')
+            ->paginate(30)
+            ->withQueryString();
+        $groups = ProductGroup::query()
+            ->whereNotNull('parent_id')
+            ->where('is_active', true)
+            ->with('parent:id,name')
+            ->orderBy('name')
+            ->get();
+
+        return view('admin.suppliers.catalog', [
+            'supplier' => $supplier,
+            'catalogProducts' => $catalogProducts,
+            'groups' => $groups,
+            'keyword' => $keyword,
+            'cycles' => self::CYCLES,
+            'localCurrency' => strtoupper((string) config('kjaiu.currency.code', 'CNY')),
+        ]);
+    }
+
+    public function importCatalog(
+        Request $request,
+        SupplierAccount $supplier,
+        SupplierCatalogImportService $catalogImport,
+    ): RedirectResponse {
+        $this->requireSupportedAccount($supplier);
+        $currentPassword = $request->input('current_password');
+        $request->request->remove('current_password');
+        $data = $request->validate([
+            'product_group_id' => [
+                'required',
+                'integer',
+                Rule::exists('product_groups', 'id')->whereNotNull('parent_id')->where('is_active', true),
+            ],
+            'catalog_products' => ['required', 'array', 'min:1', 'max:50'],
+            'catalog_products.*' => ['required', 'integer', 'distinct'],
+        ]);
+        $this->validateCurrentPassword($request->user(), $currentPassword);
+        $imported = $catalogImport->import(
+            $request,
+            $supplier,
+            ProductGroup::query()->findOrFail($data['product_group_id']),
+            $request->user(),
+            array_map('intval', $data['catalog_products']),
+        );
+
+        return redirect()->route('admin.suppliers.catalog', $supplier)->with(
+            'success',
+            '已导入 '.count($imported).' 个上游商品；商品默认下架，请检查售价后再上架。',
+        );
     }
 
     public function update(Request $request, SupplierAccount $supplier): RedirectResponse
@@ -641,7 +708,7 @@ class SupplierController extends Controller
             $sensitive,
         );
 
-        return back()->with(
+        return redirect()->route('admin.suppliers.catalog', $supplier)->with(
             'success',
             '上游目录同步完成，共读取 '.$result['product_count'].' 个商品',
         );

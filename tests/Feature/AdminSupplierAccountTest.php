@@ -37,6 +37,8 @@ class AdminSupplierAccountTest extends TestCase
         $this->put('/admin/suppliers/'.$supplier->id)->assertRedirect('/login');
         $this->post('/admin/suppliers/'.$supplier->id.'/test')->assertRedirect('/login');
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertRedirect('/login');
+        $this->get('/admin/suppliers/'.$supplier->id.'/catalog')->assertRedirect('/login');
+        $this->post('/admin/suppliers/'.$supplier->id.'/catalog-import')->assertRedirect('/login');
         $this->put('/admin/suppliers/'.$supplier->id.'/mappings')->assertRedirect('/login');
 
         $client = User::factory()->create(['role' => 'client', 'status' => 'Active']);
@@ -45,6 +47,8 @@ class AdminSupplierAccountTest extends TestCase
         $this->put('/admin/suppliers/'.$supplier->id)->assertForbidden();
         $this->post('/admin/suppliers/'.$supplier->id.'/test')->assertForbidden();
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertForbidden();
+        $this->get('/admin/suppliers/'.$supplier->id.'/catalog')->assertForbidden();
+        $this->post('/admin/suppliers/'.$supplier->id.'/catalog-import')->assertForbidden();
         $this->put('/admin/suppliers/'.$supplier->id.'/mappings')->assertForbidden();
 
         $inactiveAdministrator = User::factory()->create([
@@ -82,6 +86,7 @@ class AdminSupplierAccountTest extends TestCase
             'admin.suppliers.update',
             'admin.suppliers.test',
             'admin.suppliers.catalog-sync',
+            'admin.suppliers.catalog-import',
             'admin.suppliers.mappings',
         ] as $routeName) {
             $route = Route::getRoutes()->getByName($routeName);

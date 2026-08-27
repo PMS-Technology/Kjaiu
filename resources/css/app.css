@@ -1293,6 +1293,51 @@ a.mono-link:hover {
     border-top: 1px solid var(--line);
 }
 
+.confirmation-modal {
+    width: min(470px, calc(100vw - 28px));
+    overflow: hidden;
+}
+
+.confirmation-mark {
+    display: grid;
+    width: 58px;
+    height: 58px;
+    margin: 28px 24px 0;
+    place-items: center;
+    background: var(--ink);
+    color: var(--surface);
+    font-family: Georgia, serif;
+    font-size: 32px;
+}
+
+.confirmation-copy {
+    padding: 18px 24px 26px;
+}
+
+.confirmation-copy h2 {
+    margin: 4px 0 10px;
+    font-family: Georgia, serif;
+    font-size: 27px;
+    font-weight: 500;
+    letter-spacing: -0.025em;
+}
+
+.confirmation-copy > p:last-child {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.75;
+}
+
+.catalog-import-toolbar {
+    display: grid;
+    padding: 18px 20px;
+    grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+    align-items: end;
+    gap: 14px;
+    border-bottom: 1px solid var(--line);
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3186,6 +3231,10 @@ a.mono-link:hover {
 }
 
 @media (max-width: 900px) {
+    .catalog-import-toolbar {
+        grid-template-columns: 1fr;
+    }
+
     .sidebar {
         width: min(290px, 86vw);
         transform: translateX(-105%);

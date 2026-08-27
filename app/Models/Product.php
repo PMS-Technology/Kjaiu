@@ -38,6 +38,11 @@ class Product extends Model
         return $this->hasMany(SupplierProductMapping::class);
     }
 
+    public function supplierCatalogImport()
+    {
+        return $this->hasOne(SupplierCatalogImport::class);
+    }
+
     public function supplierOrderItemRoutes()
     {
         return $this->hasMany(SupplierOrderItemRoute::class, 'local_product_id');

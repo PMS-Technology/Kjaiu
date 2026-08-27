@@ -183,6 +183,152 @@ class AdminSupplierCatalogTest extends TestCase
         Http::assertSentCount(4);
     }
 
+    public function test_catalog_page_lists_only_the_selected_suppliers_products(): void
+    {
+        $administrator = $this->administrator();
+        $supplier = $this->supplier();
+        $otherSupplier = $this->supplier();
+        SupplierCatalogProduct::createForAccount($supplier, [
+            'upstream_product_id' => 'visible-101',
+            'name' => 'Visible upstream product',
+            'currency' => 'CNY',
+            'billing_cycles' => ['monthly'],
+            'metadata' => ['prices' => ['monthly' => ['price' => '10.00', 'setup_fee' => '0.00']]],
+        ]);
+        SupplierCatalogProduct::createForAccount($otherSupplier, [
+            'upstream_product_id' => 'hidden-202',
+            'name' => 'Other supplier product',
+            'currency' => 'CNY',
+            'billing_cycles' => ['monthly'],
+            'metadata' => ['prices' => ['monthly' => ['price' => '20.00', 'setup_fee' => '0.00']]],
+        ]);
+
+        $this->actingAs($administrator)
+            ->get('/admin/suppliers/'.$supplier->id.'/catalog')
+            ->assertOk()
+            ->assertSee('导入上游商品')
+            ->assertSee('Visible upstream product')
+            ->assertDontSee('Other supplier product');
+    }
+
+    public function test_administrator_can_select_and_import_an_upstream_product_with_all_prices_and_mappings(): void
+    {
+        $administrator = $this->administrator();
+        $supplier = $this->supplier();
+        $parent = ProductGroup::create(['name' => 'Infrastructure']);
+        $group = ProductGroup::create([
+            'parent_id' => $parent->id,
+            'name' => 'Cloud servers',
+            'is_active' => true,
+        ]);
+        $catalog = SupplierCatalogProduct::createForAccount($supplier, [
+            'upstream_product_id' => 'compute-101',
+            'type' => 'cloud',
+            'name' => 'Upstream compute',
+            'description' => 'Compute imported from supplier',
+            'currency' => 'CNY',
+            'minimum_price' => '12.35',
+            'billing_cycles' => ['monthly', 'annually'],
+            'metadata' => [
+                'primary_billing_cycle' => 'monthly',
+                'prices' => [
+                    'monthly' => ['price' => '12.35', 'setup_fee' => '1.50'],
+                    'annually' => ['price' => '120.00', 'setup_fee' => '0.00'],
+                ],
+            ],
+        ]);
+
+        $this->actingAs($administrator)->post(
+            '/admin/suppliers/'.$supplier->id.'/catalog-import',
+            [
+                'product_group_id' => $group->id,
+                'catalog_products' => [$catalog->id],
+                'current_password' => 'admin-password',
+            ],
+        )->assertRedirect('/admin/suppliers/'.$supplier->id.'/catalog')
+            ->assertSessionHas('success');
+
+        $product = Product::query()->where('name', 'Upstream compute')->sole();
+        $this->assertSame($group->id, $product->product_group_id);
+        $this->assertSame('monthly', $product->billing_cycle);
+        $this->assertSame('12.35', $product->price);
+        $this->assertSame('1.50', $product->setup_fee);
+        $this->assertFalse($product->is_active);
+        $this->assertFalse($product->auto_setup);
+        $this->assertSame('120.00', $product->prices()->where('billing_cycle', 'annually')->sole()->price);
+        $this->assertSame(
+            ['annually', 'monthly'],
+            $product->supplierMappings()->orderBy('local_billing_cycle')->pluck('local_billing_cycle')->all(),
+        );
+        $this->assertDatabaseHas('supplier_catalog_imports', [
+            'supplier_account_id' => $supplier->id,
+            'supplier_catalog_product_id' => $catalog->id,
+            'product_id' => $product->id,
+            'imported_by' => $administrator->id,
+        ]);
+        $audit = AuditLog::query()->where('action', 'supplier.catalog_products_imported')->sole();
+        $this->assertSame(1, $audit->after['imported_count']);
+        $this->assertStringNotContainsString('admin-password', $audit->toJson());
+    }
+
+    public function test_catalog_import_rejects_duplicates_cross_account_products_and_currency_mismatches_atomically(): void
+    {
+        $administrator = $this->administrator();
+        $supplier = $this->supplier();
+        $otherSupplier = $this->supplier();
+        $parent = ProductGroup::create(['name' => 'Infrastructure']);
+        $group = ProductGroup::create(['parent_id' => $parent->id, 'name' => 'Cloud servers']);
+        $valid = SupplierCatalogProduct::createForAccount($supplier, [
+            'upstream_product_id' => 'valid-101',
+            'name' => 'Valid product',
+            'currency' => 'CNY',
+            'billing_cycles' => ['monthly'],
+            'metadata' => ['prices' => ['monthly' => ['price' => '10.00', 'setup_fee' => '0.00']]],
+        ]);
+        $foreign = SupplierCatalogProduct::createForAccount($otherSupplier, [
+            'upstream_product_id' => 'foreign-202',
+            'name' => 'Foreign product',
+            'currency' => 'CNY',
+            'billing_cycles' => ['monthly'],
+            'metadata' => ['prices' => ['monthly' => ['price' => '20.00', 'setup_fee' => '0.00']]],
+        ]);
+        $usd = SupplierCatalogProduct::createForAccount($supplier, [
+            'upstream_product_id' => 'usd-303',
+            'name' => 'USD product',
+            'currency' => 'USD',
+            'billing_cycles' => ['monthly'],
+            'metadata' => ['prices' => ['monthly' => ['price' => '30.00', 'setup_fee' => '0.00']]],
+        ]);
+
+        $payload = fn (array $products): array => [
+            'product_group_id' => $group->id,
+            'catalog_products' => $products,
+            'current_password' => 'admin-password',
+        ];
+        $this->actingAs($administrator)->post(
+            '/admin/suppliers/'.$supplier->id.'/catalog-import',
+            $payload([$valid->id, $foreign->id]),
+        )->assertSessionHasErrors('catalog_products');
+        $this->assertDatabaseCount('products', 0);
+
+        $this->post(
+            '/admin/suppliers/'.$supplier->id.'/catalog-import',
+            $payload([$valid->id, $usd->id]),
+        )->assertSessionHasErrors('catalog_products');
+        $this->assertDatabaseCount('products', 0);
+
+        $this->post(
+            '/admin/suppliers/'.$supplier->id.'/catalog-import',
+            $payload([$valid->id]),
+        )->assertSessionHas('success');
+        $this->post(
+            '/admin/suppliers/'.$supplier->id.'/catalog-import',
+            $payload([$valid->id]),
+        )->assertSessionHasErrors('catalog_products');
+        $this->assertDatabaseCount('products', 1);
+        $this->assertDatabaseCount('supplier_catalog_imports', 1);
+    }
+
     public function test_detail_failure_preserves_the_complete_previous_catalog_and_mappings(): void
     {
         $administrator = $this->administrator();
@@ -1073,10 +1219,12 @@ class AdminSupplierCatalogTest extends TestCase
         $script = file_get_contents(resource_path('js/app.js'));
         $this->assertIsString($script);
         $this->assertStringContainsString('form[data-dirty-guard]', $script);
-        $this->assertStringContainsString('beforeunload', $script);
+        $this->assertStringContainsString('requestConfirmation', $script);
         $this->assertStringContainsString('dialog.addEventListener("cancel"', $script);
         $this->assertStringContainsString('event.defaultPrevented', $script);
         $this->assertStringContainsString('form.dataset.submitting = "true"', $script);
+        $this->assertStringNotContainsString('window.confirm', $script);
+        $this->assertStringNotContainsString('beforeunload', $script);
     }
 
     public function test_blank_mapping_only_deactivates_the_submitted_pair_and_omissions_are_preserved(): void

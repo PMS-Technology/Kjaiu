@@ -91,6 +91,11 @@ class SupplierAccount extends Model
         return $this->hasMany(SupplierCatalogProduct::class);
     }
 
+    public function catalogImports()
+    {
+        return $this->hasMany(SupplierCatalogImport::class);
+    }
+
     public function productMappings()
     {
         return $this->hasMany(SupplierProductMapping::class);

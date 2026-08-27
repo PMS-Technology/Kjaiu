@@ -62,6 +62,7 @@
                             <label class="field"><span>当前管理员密码</span><input type="password" name="current_password" value="" required autocomplete="current-password"></label>
                             <button class="button button-secondary" type="submit">同步上游目录</button>
                         </form>
+                        <a class="button button-secondary" href="{{ route('admin.suppliers.catalog', $account) }}">选择导入商品</a>
                         <button class="button button-primary" type="button" data-dialog-open="supplier-mappings-{{ $account->id }}">配置周期映射</button>
                     </div>
                 </article>

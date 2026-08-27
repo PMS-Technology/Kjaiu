@@ -126,6 +126,11 @@ class SupplierCatalogProduct extends SupplierOwnedModel
         return $this->hasMany(SupplierProductMapping::class);
     }
 
+    public function catalogImport()
+    {
+        return $this->hasOne(SupplierCatalogImport::class);
+    }
+
     public function orderItemRoutes()
     {
         return $this->hasMany(SupplierOrderItemRoute::class);
