@@ -27,7 +27,7 @@ class AuthenticateFinanceApi
             $user = null;
         }
 
-        if (! $user || $user->status !== 'Active' || (int) $claims['ver'] !== $user->token_version) {
+        if (! $user || ! $user->canAuthenticate() || (int) $claims['ver'] !== $user->token_version) {
             return response()->json(['status' => 405, 'msg' => '登录状态已失效，请重新登录']);
         }
 

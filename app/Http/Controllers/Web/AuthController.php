@@ -33,8 +33,7 @@ class AuthController extends Controller
         }
 
         $user = User::query()->findOrFail($request->user()->id);
-        if ($user->status !== 'Active'
-            || ! in_array($user->role, ['client', 'admin'], true)) {
+        if (! $user->canAuthenticate()) {
             Auth::logout();
             $request->session()->invalidate();
             $request->session()->regenerateToken();

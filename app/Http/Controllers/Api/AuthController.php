@@ -44,8 +44,8 @@ class AuthController extends ApiController
             return $this->error('账号或密码错误');
         }
 
-        if ($user->status !== 'Active') {
-            return $this->error('账号已被停用');
+        if (! $user->canAuthenticate()) {
+            return $this->error($user->status === 'Active' ? '该账号当前不可登录' : '账号已被停用');
         }
 
         $token = $jwt->issue($user);

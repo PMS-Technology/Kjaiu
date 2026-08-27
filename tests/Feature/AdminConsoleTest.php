@@ -29,6 +29,74 @@ class AdminConsoleTest extends TestCase
         }
     }
 
+    public function test_user_management_lists_administrators_as_users(): void
+    {
+        $this->withoutVite();
+        $administrator = User::factory()->administrator()->create(['name' => 'Primary Administrator']);
+
+        $this->actingAs($administrator)
+            ->get('/admin/customers')
+            ->assertOk()
+            ->assertSee('用户管理')
+            ->assertSee('Primary Administrator')
+            ->assertSee('管理员');
+    }
+
+    public function test_an_administrator_can_promote_a_user_and_revoke_existing_credentials(): void
+    {
+        $this->useDatabaseSessions();
+        $administrator = User::factory()->administrator()->create();
+        $user = User::factory()->create([
+            'token_version' => 3,
+            'remember_token' => 'old-remember-token',
+        ]);
+        $sessionId = $this->addSession($user);
+
+        $this->actingAs($administrator)->put('/admin/customers/'.$user->id, $this->customerPayload($user, [
+            'role' => User::ROLE_ADMIN,
+        ]))->assertRedirect('/admin/customers')->assertSessionHas('success');
+
+        $updated = $user->fresh();
+        $this->assertTrue($updated->isAdministrator());
+        $this->assertSame(4, $updated->token_version);
+        $this->assertNotSame('old-remember-token', $updated->remember_token);
+        $this->assertDatabaseMissing('sessions', ['id' => $sessionId]);
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'customer.updated',
+            'subject_id' => $user->id,
+        ]);
+    }
+
+    public function test_the_last_active_administrator_cannot_be_demoted_or_suspended(): void
+    {
+        $administrator = User::factory()->administrator()->create();
+
+        $this->actingAs($administrator)->put('/admin/customers/'.$administrator->id, $this->customerPayload($administrator, [
+            'role' => User::ROLE_CLIENT,
+        ]))->assertSessionHasErrors('role');
+        $this->assertSame(User::ROLE_ADMIN, $administrator->fresh()->role);
+
+        $this->put('/admin/customers/'.$administrator->id, $this->customerPayload($administrator, [
+            'status' => 'Suspended',
+        ]))->assertSessionHasErrors('role');
+        $this->assertSame('Active', $administrator->fresh()->status);
+    }
+
+    public function test_an_administrator_can_demote_another_administrator(): void
+    {
+        $administrator = User::factory()->administrator()->create();
+        $otherAdministrator = User::factory()->administrator()->create(['token_version' => 5]);
+
+        $this->actingAs($administrator)->put(
+            '/admin/customers/'.$otherAdministrator->id,
+            $this->customerPayload($otherAdministrator, ['role' => User::ROLE_CLIENT]),
+        )->assertRedirect('/admin/customers');
+
+        $updated = $otherAdministrator->fresh();
+        $this->assertSame(User::ROLE_CLIENT, $updated->role);
+        $this->assertSame(6, $updated->token_version);
+    }
+
     public function test_admin_password_reset_rotates_credentials_and_revokes_customer_database_sessions(): void
     {
         $this->useDatabaseSessions();
@@ -131,6 +199,7 @@ class AdminConsoleTest extends TestCase
             'email' => $customer->email,
             'phone' => $customer->phone,
             'company_name' => $customer->company_name,
+            'role' => $customer->role,
             'status' => $customer->status,
             'password' => '',
         ], $overrides);

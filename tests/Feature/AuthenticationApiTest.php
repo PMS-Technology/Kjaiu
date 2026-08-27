@@ -53,6 +53,25 @@ class AuthenticationApiTest extends TestCase
             ->assertJsonStructure(['data' => ['client', 'country']]);
     }
 
+    public function test_accounts_outside_supported_user_groups_cannot_use_web_or_api_authentication(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'unsupported@example.test',
+            'password' => 'correct-password',
+            'role' => 'unsupported',
+        ]);
+
+        $this->post('/login', [
+            'email' => $user->email,
+            'password' => 'correct-password',
+        ])->assertRedirect('/login')->assertSessionHasErrors('email');
+        $this->assertGuest();
+
+        $this->post('/v1/login', [
+            'email' => ['email' => $user->email, 'password' => 'correct-password'],
+        ])->assertJsonPath('status', 400)->assertJsonMissingPath('jwt');
+    }
+
     public function test_password_change_revokes_all_previously_issued_tokens(): void
     {
         $user = User::factory()->create([

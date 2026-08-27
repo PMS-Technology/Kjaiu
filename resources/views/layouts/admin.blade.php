@@ -23,7 +23,7 @@
             </a>
             <a href="{{ route('admin.customers.index') }}" class="{{ request()->routeIs('admin.customers.*') ? 'is-active' : '' }}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM8 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8 0c-2.67 0-8 1.34-8 4v3h16v-3c0-2.66-5.33-4-8-4ZM8 15c-.31 0-.65.02-1 .05C4.65 15.26 0 16.45 0 19v1h5v-3c0-.7.27-1.34.75-1.91A13.4 13.4 0 0 1 8 15Z"/></svg>
-                <span>客户</span>
+                <span>用户</span>
             </a>
             <a href="{{ route('admin.products.index') }}" class="{{ request()->routeIs('admin.products.*') || request()->routeIs('admin.product-groups.*') ? 'is-active' : '' }}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Zm-7.74 8.2L12 14.5l7.74-4.3L21 11v6l-9 5-9-5v-6l1.26-.8Z"/></svg>

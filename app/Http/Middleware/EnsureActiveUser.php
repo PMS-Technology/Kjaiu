@@ -19,8 +19,7 @@ class EnsureActiveUser
             ? User::query()->find($authenticatedUser->getAuthIdentifier())
             : null;
         $guard = Auth::guard('web');
-        $userCanAuthenticate = $user?->status === 'Active'
-            && in_array($user->role, ['client', 'admin'], true);
+        $userCanAuthenticate = $user?->canAuthenticate() === true;
 
         // actingAs() injects a guard user but intentionally does not create a web login session.
         if ($user
@@ -52,7 +51,7 @@ class EnsureActiveUser
 
         return redirect()->route('login')->withErrors([
             'email' => match (true) {
-                $user === null, ! in_array($user->role, ['client', 'admin'], true) => '该账户当前不可登录',
+                $user === null, ! $user->hasSupportedRole() => '该账户当前不可登录',
                 $user->status !== 'Active' => '账户已停用，请联系管理员',
                 default => '登录凭据已更新，请重新登录',
             },
