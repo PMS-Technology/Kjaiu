@@ -132,10 +132,8 @@ class AdminSupplierOperationTest extends TestCase
 
         foreach (range(1, 10) as $attempt) {
             $this->post($this->attestationPath($fixture['operation']), [
-                'current_password' => 'wrong-admin-password',
-                'confirmation' => '1',
                 'upstream_host_id' => 'host-attestation-throttle',
-            ])->assertRedirect()->assertSessionHasErrors('current_password');
+            ])->assertRedirect()->assertSessionHasErrors('confirmation');
         }
 
         $response = $this->post(
@@ -151,28 +149,16 @@ class AdminSupplierOperationTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_recovery_requires_current_password_and_explicit_confirmation_without_flashing_secrets(): void
+    public function test_recovery_requires_explicit_confirmation_without_flashing_input(): void
     {
         $fixture = $this->blockedCreditFixture('confirmation');
         $administrator = $this->administrator();
-        $wrongPassword = 'wrong-current-password';
-
         $response = $this->actingAs($administrator)->post(
             $this->creditPath($fixture['operation']),
             [
                 '_form' => 'supplier-operation-'.$fixture['operation']->id,
-                'current_password' => $wrongPassword,
-                'confirmation' => '1',
             ],
         );
-        $response->assertSessionHasErrors('current_password')
-            ->assertSessionMissing('_old_input.current_password')
-            ->assertSessionMissing('_old_input.confirmation');
-
-        $response = $this->post($this->creditPath($fixture['operation']), [
-            '_form' => 'supplier-operation-'.$fixture['operation']->id,
-            'current_password' => 'admin-password',
-        ]);
         $response->assertSessionHasErrors('confirmation')
             ->assertSessionMissing('_old_input.current_password')
             ->assertSessionMissing('_old_input.confirmation');
@@ -185,10 +171,9 @@ class AdminSupplierOperationTest extends TestCase
         $audits = AuditLog::query()
             ->where('action', 'supplier.operation.credit_resume')
             ->get();
-        $this->assertCount(2, $audits);
+        $this->assertCount(1, $audits);
         foreach ($audits as $audit) {
             $payload = json_encode($audit->toArray(), JSON_THROW_ON_ERROR);
-            $this->assertStringNotContainsString($wrongPassword, $payload);
             $this->assertStringNotContainsString('admin-password', $payload);
             $this->assertSame('validation_rejected', $audit->after['outcome']);
             $this->assertSame('[REDACTED]', $audit->user_agent);
@@ -622,7 +607,7 @@ class AdminSupplierOperationTest extends TestCase
             ->assertSee('准确账单、商品、应付金额和币种完全一致')
             ->assertSee('action="'.url($this->attestationPath($fixture['operation'])).'"', false)
             ->assertSee('name="upstream_host_id"', false)
-            ->assertSee('name="current_password"', false)
+            ->assertDontSee('name="current_password"', false)
             ->assertSee('name="confirmation"', false)
             ->assertDontSee('action="'.url($this->creditPath($fixture['operation'])).'"', false)
             ->assertDontSee('machine-password-manual-attestation');
@@ -701,14 +686,7 @@ class AdminSupplierOperationTest extends TestCase
         $fixture = $this->manualPaymentFixture('attestation-validation');
         $this->actingAs($administrator);
 
-        $this->post($this->attestationPath($fixture['operation']), $this->confirmedPayload([
-            'current_password' => 'wrong-admin-password',
-            'upstream_host_id' => 'host-attestation-validation',
-        ]))->assertSessionHasErrors('current_password')
-            ->assertSessionMissing('_old_input.current_password')
-            ->assertSessionMissing('_old_input.upstream_host_id');
         $this->post($this->attestationPath($fixture['operation']), [
-            'current_password' => 'admin-password',
             'upstream_host_id' => 'host-attestation-validation',
         ])->assertSessionHasErrors('confirmation');
 
@@ -1379,7 +1357,6 @@ class AdminSupplierOperationTest extends TestCase
     private function confirmedPayload(array $attributes = []): array
     {
         return array_replace([
-            'current_password' => 'admin-password',
             'confirmation' => '1',
         ], $attributes);
     }

@@ -10,7 +10,6 @@ use App\Models\SupplierOperation;
 use App\Services\SupplierProvisioningProcessor;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Throwable;
@@ -269,14 +268,7 @@ class SupplierOperationController extends Controller
         string $auditAction,
     ): void {
         $confirmed = in_array($input['confirmation'], ['1', 1, true, 'yes', 'on'], true);
-        $password = $input['current_password'];
-        $passwordIsValid = is_string($password)
-            && $password !== ''
-            && strlen($password) <= 1024
-            && $request->user() !== null
-            && Hash::check($password, $request->user()->password);
-
-        if ($confirmed && $passwordIsValid) {
+        if ($confirmed) {
             return;
         }
 
@@ -292,17 +284,12 @@ class SupplierOperationController extends Controller
         if (! $confirmed) {
             $errors['confirmation'] = '请勾选明确确认后再执行安全恢复';
         }
-        if (! $passwordIsValid) {
-            $errors['current_password'] = '请输入正确的当前管理员密码';
-        }
-
         throw ValidationException::withMessages($errors);
     }
 
     private function takeRecoveryInput(Request $request, bool $withHostId = false): array
     {
         $input = [
-            'current_password' => $request->input('current_password'),
             'confirmation' => $request->input('confirmation'),
             'upstream_host_id' => $withHostId ? $request->input('upstream_host_id') : null,
         ];
@@ -317,7 +304,6 @@ class SupplierOperationController extends Controller
     private function validatedHostId(SupplierOperation $operation, array $input): string
     {
         $hostId = $input['upstream_host_id'];
-        $password = $input['current_password'];
         if (! is_string($hostId) && ! is_int($hostId)) {
             throw ValidationException::withMessages([
                 'upstream_host_id' => '请输入有效的上游主机 ID',
@@ -325,9 +311,6 @@ class SupplierOperationController extends Controller
         }
         $hostId = trim((string) $hostId);
         $sensitive = $this->credentialValues($operation->account);
-        if (is_string($password) && $password !== '') {
-            $sensitive[] = $password;
-        }
         $containsSensitiveValue = collect($sensitive)->contains(
             fn (string $value): bool => hash_equals($hostId, $value)
                 || (strlen($value) >= 8 && str_contains($hostId, $value)),

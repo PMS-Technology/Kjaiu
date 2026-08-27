@@ -207,6 +207,10 @@ document.querySelectorAll("form[data-confirm]").forEach((form) => {
     });
 });
 
+document.querySelectorAll("form[data-auto-submit]").forEach((form) => {
+    form.requestSubmit();
+});
+
 document.querySelectorAll("[data-stock-toggle]").forEach((toggle) => {
     const input = toggle.closest("form")?.querySelector("[data-stock-input]");
     const sync = () => {

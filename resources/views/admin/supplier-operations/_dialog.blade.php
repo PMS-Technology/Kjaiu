@@ -50,7 +50,6 @@
                 <form method="POST" action="{{ route('admin.supplier-operations.resume-credit', $operation['id']) }}" class="form-grid">
                     @csrf
                     <input type="hidden" name="_form" value="supplier-operation-{{ $operation['id'] }}">
-                    <label class="field field-full"><span>当前管理员密码</span><input type="password" name="current_password" value="" maxlength="1024" autocomplete="current-password" required></label>
                     <label class="switch-field field-full"><input type="checkbox" name="confirmation" value="1" required><span></span><b>我理解无法原子限制扣款，并确认只调用一次旧版余额支付</b></label>
                     <button class="button button-primary field-full" type="submit">兼容自动扣余额</button>
                 </form>
@@ -64,7 +63,6 @@
                     @csrf
                     <input type="hidden" name="_form" value="supplier-operation-{{ $operation['id'] }}">
                     <label class="field field-full"><span>上游主机 ID <small>必须来自已人工付款的正确供应商主机</small></span><input name="upstream_host_id" value="" maxlength="128" autocomplete="off" required></label>
-                    <label class="field field-full"><span>当前管理员密码</span><input type="password" name="current_password" value="" maxlength="1024" autocomplete="current-password" required></label>
                     <label class="switch-field field-full"><input type="checkbox" name="confirmation" value="1" required><span></span><b>我已核对准确账单、商品、金额、币种及主机归属，确认已在上游付款，并理解这只是人工作证而非密码学验证</b></label>
                     <button class="button button-secondary field-full" type="submit">已在上游人工付款并确认主机</button>
                 </form>
@@ -77,7 +75,6 @@
                 <form method="POST" action="{{ route('admin.supplier-operations.recover-poll', $operation['id']) }}" class="form-grid">
                     @csrf
                     <input type="hidden" name="_form" value="supplier-operation-{{ $operation['id'] }}">
-                    <label class="field field-full"><span>当前管理员密码</span><input type="password" name="current_password" value="" maxlength="1024" autocomplete="current-password" required></label>
                     <label class="switch-field field-full"><input type="checkbox" name="confirmation" value="1" required><span></span><b>我确认只对已关联主机执行状态读取</b></label>
                     <button class="button button-secondary field-full" type="submit">恢复并立即轮询</button>
                 </form>
@@ -91,7 +88,6 @@
                     @csrf
                     <input type="hidden" name="_form" value="supplier-operation-{{ $operation['id'] }}">
                     <label class="field field-full"><span>上游主机 ID <small>来自供应商侧可核验记录</small></span><input name="upstream_host_id" value="" maxlength="128" autocomplete="off" required></label>
-                    <label class="field field-full"><span>当前管理员密码</span><input type="password" name="current_password" value="" maxlength="1024" autocomplete="current-password" required></label>
                     <label class="switch-field field-full"><input type="checkbox" name="confirmation" value="1" required><span></span><b>我已核对供应商证据，并确认不重放采购</b></label>
                     <button class="button button-primary field-full" type="submit">验证并关联主机</button>
                 </form>

@@ -9,6 +9,9 @@
 @endsection
 
 @section('content')
+    @if($autoSyncCatalog)
+        <form method="POST" action="{{ route('admin.suppliers.catalog-sync', $supplier) }}" data-auto-submit hidden>@csrf</form>
+    @endif
     <section class="summary-strip">
         <div><span>目录商品</span><strong>{{ number_format($catalogProducts->total()) }}</strong></div>
         <i></i>
@@ -32,7 +35,6 @@
             <input type="hidden" name="_form" value="supplier-catalog-import-{{ $supplier->id }}">
             <div class="catalog-import-toolbar">
                 <label class="field"><span>导入到本地分组</span><select name="product_group_id" required><option value="">请选择子分组</option>@foreach($groups as $group)<option value="{{ $group->id }}" @selected((string) old('product_group_id') === (string) $group->id)>{{ $group->parent?->name }} / {{ $group->name }}</option>@endforeach</select></label>
-                <label class="field"><span>当前管理员密码</span><input type="password" name="current_password" required maxlength="1024" autocomplete="current-password"></label>
                 <button class="button button-primary" type="submit">导入所选商品</button>
             </div>
 
@@ -72,7 +74,7 @@
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="5"><div class="empty-state"><span>UP</span><h3>没有可显示的上游商品</h3><p>返回供应商页面同步目录，或调整搜索条件。</p></div></td></tr>
+                        <tr><td colspan="5"><div class="empty-state"><span>UP</span><h3>没有可显示的上游商品</h3><p>请检查供应商连接，或调整搜索条件后重新进入。</p></div></td></tr>
                     @endforelse
                     </tbody>
                 </table>

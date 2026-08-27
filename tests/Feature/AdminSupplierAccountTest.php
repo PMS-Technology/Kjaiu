@@ -35,7 +35,7 @@ class AdminSupplierAccountTest extends TestCase
         $this->get('/admin/suppliers')->assertRedirect('/login');
         $this->post('/admin/suppliers')->assertRedirect('/login');
         $this->put('/admin/suppliers/'.$supplier->id)->assertRedirect('/login');
-        $this->post('/admin/suppliers/'.$supplier->id.'/test')->assertRedirect('/login');
+        $this->post('/admin/suppliers/test-active')->assertRedirect('/login');
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertRedirect('/login');
         $this->get('/admin/suppliers/'.$supplier->id.'/catalog')->assertRedirect('/login');
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-import')->assertRedirect('/login');
@@ -45,7 +45,7 @@ class AdminSupplierAccountTest extends TestCase
         $this->actingAs($client)->get('/admin/suppliers')->assertForbidden();
         $this->post('/admin/suppliers')->assertForbidden();
         $this->put('/admin/suppliers/'.$supplier->id)->assertForbidden();
-        $this->post('/admin/suppliers/'.$supplier->id.'/test')->assertForbidden();
+        $this->post('/admin/suppliers/test-active')->assertForbidden();
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertForbidden();
         $this->get('/admin/suppliers/'.$supplier->id.'/catalog')->assertForbidden();
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-import')->assertForbidden();
@@ -64,7 +64,9 @@ class AdminSupplierAccountTest extends TestCase
             ->get('/admin/suppliers')
             ->assertOk()
             ->assertSee('上游供应商')
-            ->assertSee('测试已保存连接')
+            ->assertSee('data-auto-submit', false)
+            ->assertDontSee('name="current_password"', false)
+            ->assertDontSee('同步上游目录')
             ->assertSee('name="_token"', false);
     }
 
@@ -84,7 +86,7 @@ class AdminSupplierAccountTest extends TestCase
         foreach ([
             'admin.suppliers.store',
             'admin.suppliers.update',
-            'admin.suppliers.test',
+            'admin.suppliers.test-active',
             'admin.suppliers.catalog-sync',
             'admin.suppliers.catalog-import',
             'admin.suppliers.mappings',
@@ -95,93 +97,45 @@ class AdminSupplierAccountTest extends TestCase
         }
     }
 
-    public function test_shared_supplier_throttle_aggregates_password_attempts_across_routes(): void
+    public function test_shared_supplier_throttle_aggregates_supplier_writes(): void
     {
         $administrator = $this->administrator();
         $supplier = $this->supplier();
         $this->actingAs($administrator)->withServerVariables(['REMOTE_ADDR' => '203.0.113.20']);
-        $wrongAccount = $this->accountPayload([
-            'code' => $supplier->code,
-            'base_url' => 'https://changed-supplier.example.com',
-            'current_password' => 'wrong-admin-password',
-        ]);
-        $wrongMapping = [
-            'current_password' => 'wrong-admin-password',
-            'mapping_page' => 1,
-            'mapping_page_token' => 'invalid-page-token',
-            'mappings' => [[
-                'product_id' => 1,
-                'local_billing_cycle' => 'monthly',
-                'target' => '',
-            ]],
-        ];
-        $attempts = [
-            fn () => $this->post('/admin/suppliers', $this->accountPayload([
-                'current_password' => 'wrong-admin-password',
-            ])),
-            fn () => $this->put('/admin/suppliers/'.$supplier->id, $wrongAccount),
-            fn () => $this->post('/admin/suppliers/'.$supplier->id.'/test', [
-                'current_password' => 'wrong-admin-password',
-            ]),
-            fn () => $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync', [
-                'current_password' => 'wrong-admin-password',
-            ]),
-            fn () => $this->put('/admin/suppliers/'.$supplier->id.'/mappings', $wrongMapping),
-            fn () => $this->post('/admin/suppliers', $this->accountPayload([
-                'current_password' => 'wrong-admin-password',
-            ])),
-            fn () => $this->put('/admin/suppliers/'.$supplier->id, $wrongAccount),
-            fn () => $this->put('/admin/suppliers/'.$supplier->id.'/mappings', $wrongMapping),
-            fn () => $this->post('/admin/suppliers', $this->accountPayload([
-                'current_password' => 'wrong-admin-password',
-            ])),
-            fn () => $this->put('/admin/suppliers/'.$supplier->id, $wrongAccount),
-        ];
-
-        foreach ($attempts as $attempt) {
-            $attempt()->assertRedirect()->assertSessionHasErrors('current_password');
+        foreach (range(1, 10) as $attempt) {
+            $this->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
+                'code' => $supplier->code,
+                'base_url' => $supplier->base_url,
+                'username' => '',
+                'password' => '',
+            ]))->assertRedirect();
         }
 
-        $correctPassword = $this->post('/admin/suppliers/'.$supplier->id.'/test', [
-            'current_password' => 'admin-password',
-        ]);
-        $wrongPassword = $this->put('/admin/suppliers/'.$supplier->id.'/mappings', $wrongMapping);
-        $correctPassword->assertTooManyRequests();
-        $wrongPassword->assertTooManyRequests();
-        $this->assertSame($correctPassword->getContent(), $wrongPassword->getContent());
+        $response = $this->post('/admin/suppliers/test-active');
+        $response->assertTooManyRequests();
         $this->assertSame(
             'Too many supplier administration attempts.',
-            $correctPassword->getContent(),
+            $response->getContent(),
         );
-        $this->assertStringNotContainsString('password', strtolower($correctPassword->getContent()));
+        $this->assertStringNotContainsString('password', strtolower($response->getContent()));
         Http::assertNothingSent();
-        $this->assertDatabaseCount('audit_logs', 0);
-
-        $this->actingAs($this->administrator())
-            ->withServerVariables(['REMOTE_ADDR' => '203.0.113.20'])
-            ->post('/admin/suppliers/'.$supplier->id.'/test', [
-                'current_password' => 'wrong-admin-password',
-            ])->assertRedirect()->assertSessionHasErrors('current_password');
     }
 
     public function test_sync_operational_limit_uses_the_same_generic_throttle_response(): void
     {
         $supplier = $this->supplier();
+        Http::fake(['*' => Http::response(['status' => 500, 'msg' => 'unavailable'])]);
         $this->actingAs($this->administrator())
             ->withServerVariables(['REMOTE_ADDR' => '203.0.113.21']);
 
         foreach (range(1, 2) as $attempt) {
-            $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync', [
-                'current_password' => 'wrong-admin-password',
-            ])->assertRedirect()->assertSessionHasErrors('current_password');
+            $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertRedirect();
         }
 
-        $response = $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync', [
-            'current_password' => 'admin-password',
-        ]);
+        $response = $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync');
         $response->assertTooManyRequests();
         $this->assertSame('Too many supplier administration attempts.', $response->getContent());
-        Http::assertNothingSent();
+        Http::assertSentCount(2);
     }
 
     public function test_only_idcsmart_finance_with_tls_verification_can_be_managed(): void
@@ -201,8 +155,6 @@ class AdminSupplierAccountTest extends TestCase
         $unsupported = $this->supplier(['driver' => 'unsupported_driver']);
         $this->get('/admin/suppliers')->assertDontSee($unsupported->name);
         $this->put('/admin/suppliers/'.$unsupported->id, $this->accountPayload())
-            ->assertNotFound();
-        $this->post('/admin/suppliers/'.$unsupported->id.'/test')
             ->assertNotFound();
         $this->post('/admin/suppliers/'.$unsupported->id.'/catalog-sync')
             ->assertNotFound();
@@ -270,7 +222,7 @@ class AdminSupplierAccountTest extends TestCase
         ]])->allowsLegacyUnboundedCreditPayment());
     }
 
-    public function test_legacy_unbounded_credit_option_updates_require_password_and_audit_safe_booleans(): void
+    public function test_legacy_unbounded_credit_option_updates_audit_safe_booleans(): void
     {
         $administrator = $this->administrator();
         $supplier = $this->supplier();
@@ -284,25 +236,11 @@ class AdminSupplierAccountTest extends TestCase
 
         $this->put('/admin/suppliers/'.$supplier->id, array_replace($basePayload, [
             'allow_legacy_unbounded_credit_payment' => '1',
-            'current_password' => 'wrong-admin-password',
-        ]))->assertSessionHasErrors('current_password');
-        $this->assertFalse($supplier->fresh()->allowsLegacyUnboundedCreditPayment());
-
-        $this->put('/admin/suppliers/'.$supplier->id, array_replace($basePayload, [
-            'allow_legacy_unbounded_credit_payment' => '1',
-            'current_password' => 'admin-password',
         ]))->assertRedirect(route('admin.suppliers.index'))->assertSessionHas('success');
         $this->assertTrue($supplier->fresh()->allowsLegacyUnboundedCreditPayment());
 
         $this->put('/admin/suppliers/'.$supplier->id, array_replace($basePayload, [
             'allow_legacy_unbounded_credit_payment' => '0',
-            'current_password' => 'wrong-admin-password',
-        ]))->assertSessionHasErrors('current_password');
-        $this->assertTrue($supplier->fresh()->allowsLegacyUnboundedCreditPayment());
-
-        $this->put('/admin/suppliers/'.$supplier->id, array_replace($basePayload, [
-            'allow_legacy_unbounded_credit_payment' => '0',
-            'current_password' => 'admin-password',
         ]))->assertRedirect(route('admin.suppliers.index'))->assertSessionHas('success');
         $this->assertFalse($supplier->fresh()->allowsLegacyUnboundedCreditPayment());
 
@@ -336,44 +274,32 @@ class AdminSupplierAccountTest extends TestCase
             ->assertDontSee('supplier-password');
     }
 
-    public function test_first_save_requires_both_credentials_and_the_current_password_without_flashing_secrets(): void
+    public function test_first_save_requires_both_credentials_without_flashing_secrets(): void
     {
         $administrator = $this->administrator();
         $username = 'unflashed-supplier-identity';
-        $currentPassword = 'wrong-current-password';
 
         $response = $this->actingAs($administrator)->post('/admin/suppliers', $this->accountPayload([
             'username' => $username,
             'password' => '',
-            'current_password' => $currentPassword,
         ]));
 
         $response->assertSessionHasErrors('password')
             ->assertSessionMissing('_old_input.username')
-            ->assertSessionMissing('_old_input.password')
-            ->assertSessionMissing('_old_input.current_password');
+            ->assertSessionMissing('_old_input.password');
         $this->assertDatabaseCount('supplier_accounts', 0);
 
         $secret = 'unflashed-upstream-password';
         $response = $this->post('/admin/suppliers', $this->accountPayload([
             'username' => $username,
             'password' => $secret,
-            'current_password' => $currentPassword,
         ]));
 
-        $response->assertSessionHasErrors('current_password')
+        $response->assertRedirect(route('admin.suppliers.index'))
             ->assertSessionMissing('_old_input.username')
             ->assertSessionMissing('_old_input.password')
             ->assertSessionMissing('_old_input.current_password');
-        $this->assertStringNotContainsString(
-            $username,
-            json_encode($response->getSession()->get('errors')->all(), JSON_THROW_ON_ERROR),
-        );
-        $this->assertStringNotContainsString(
-            $secret,
-            json_encode($response->getSession()->get('errors')->all(), JSON_THROW_ON_ERROR),
-        );
-        $this->assertDatabaseCount('supplier_accounts', 0);
+        $this->assertDatabaseCount('supplier_accounts', 1);
     }
 
     public function test_blank_credential_fields_preserve_the_existing_encrypted_values(): void
@@ -409,7 +335,7 @@ class AdminSupplierAccountTest extends TestCase
         );
     }
 
-    public function test_base_url_and_credential_changes_require_the_current_password(): void
+    public function test_base_url_and_credential_changes_do_not_require_current_password(): void
     {
         $administrator = $this->administrator();
         $supplier = $this->supplier();
@@ -423,24 +349,12 @@ class AdminSupplierAccountTest extends TestCase
                 'base_url' => $newUrl,
                 'username' => $newUsername,
                 'password' => $newPassword,
-                'current_password' => 'wrong-admin-password',
             ]));
 
-        $response->assertSessionHasErrors('current_password')
+        $response->assertRedirect(route('admin.suppliers.index'))
             ->assertSessionMissing('_old_input.username')
             ->assertSessionMissing('_old_input.password')
             ->assertSessionMissing('_old_input.current_password');
-        $this->assertSame('https://supplier.example.com', $supplier->fresh()->base_url);
-        $this->assertSame('supplier-user', $supplier->fresh()->credentials['username']);
-        $this->assertSame('supplier-password', $supplier->fresh()->credentials['password']);
-
-        $this->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
-            'code' => $supplier->code,
-            'base_url' => $newUrl,
-            'username' => $newUsername,
-            'password' => $newPassword,
-            'current_password' => 'admin-password',
-        ]))->assertRedirect(route('admin.suppliers.index'));
 
         $updated = $supplier->fresh();
         $this->assertSame($newUrl, $updated->base_url);
@@ -453,7 +367,7 @@ class AdminSupplierAccountTest extends TestCase
         $this->assertStringNotContainsString($newPassword, $auditPayload);
     }
 
-    public function test_account_reactivation_requires_the_current_password(): void
+    public function test_account_reactivation_does_not_require_current_password(): void
     {
         $administrator = $this->administrator();
         $supplier = $this->supplier(['is_active' => false]);
@@ -466,48 +380,31 @@ class AdminSupplierAccountTest extends TestCase
         ]);
 
         $this->actingAs($administrator)
-            ->put('/admin/suppliers/'.$supplier->id, array_merge($payload, [
-                'current_password' => 'wrong-admin-password',
-            ]))
-            ->assertSessionHasErrors('current_password');
-        $this->assertFalse($supplier->fresh()->is_active);
-
-        $this->put('/admin/suppliers/'.$supplier->id, array_merge($payload, [
-            'current_password' => 'admin-password',
-        ]))->assertRedirect(route('admin.suppliers.index'))->assertSessionHas('success');
+            ->put('/admin/suppliers/'.$supplier->id, $payload)
+            ->assertRedirect(route('admin.suppliers.index'))->assertSessionHas('success');
         $this->assertTrue($supplier->fresh()->is_active);
     }
 
-    public function test_connection_sync_and_mapping_actions_reject_missing_or_wrong_current_passwords(): void
+    public function test_supplier_actions_do_not_render_or_validate_current_password(): void
     {
         $administrator = $this->administrator();
         $supplier = $this->supplier();
 
-        $testResponse = $this->actingAs($administrator)
-            ->post('/admin/suppliers/'.$supplier->id.'/test');
-        $testResponse->assertSessionHasErrors('current_password')
-            ->assertSessionMissing('_old_input.current_password');
-
-        $syncResponse = $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync', [
-            'current_password' => 'wrong-admin-password',
-        ]);
-        $syncResponse->assertSessionHasErrors('current_password')
-            ->assertSessionMissing('_old_input.current_password');
-
-        $mappingResponse = $this->put('/admin/suppliers/'.$supplier->id.'/mappings', [
-            'current_password' => 'wrong-admin-password',
-            'mapping_page' => 1,
-            'mapping_page_token' => 'must-not-be-flashed',
-            'mappings' => [[
-                'product_id' => 1,
-                'local_billing_cycle' => 'monthly',
-                'target' => '',
-            ]],
-        ]);
-        $mappingResponse->assertSessionHasErrors('current_password')
-            ->assertSessionMissing('_old_input.current_password')
+        $mappingResponse = $this->actingAs($administrator)
+            ->put('/admin/suppliers/'.$supplier->id.'/mappings', [
+                'mapping_page' => 1,
+                'mapping_page_token' => 'must-not-be-flashed',
+                'mappings' => [[
+                    'product_id' => 1,
+                    'local_billing_cycle' => 'monthly',
+                    'target' => '',
+                ]],
+            ]);
+        $mappingResponse->assertSessionHasErrors('mappings')
             ->assertSessionMissing('_old_input.mapping_page_token');
 
+        $this->actingAs($administrator)->get('/admin/suppliers')
+            ->assertDontSee('name="current_password"', false);
         Http::assertNothingSent();
         $this->assertDatabaseCount('audit_logs', 0);
     }
@@ -611,7 +508,6 @@ class AdminSupplierAccountTest extends TestCase
             'base_url' => 'https://terminal-supplier.example.com',
             'username' => 'terminal-user',
             'password' => 'terminal-password',
-            'current_password' => 'admin-password',
             'is_active' => '0',
         ]))->assertRedirect(route('admin.suppliers.index'))->assertSessionHas('success');
 
@@ -679,19 +575,6 @@ class AdminSupplierAccountTest extends TestCase
         ];
         $newCacheKey = $this->jwtCacheKey($supplier, $newCredentials);
         Cache::put($newCacheKey, Crypt::encryptString('new-private-jwt'), 7200);
-
-        $this->actingAs($administrator)
-            ->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
-                'code' => $supplier->code,
-                'base_url' => $supplier->base_url,
-                'username' => $newCredentials['username'],
-                'password' => $newCredentials['password'],
-                'current_password' => 'wrong-admin-password',
-                'allow_legacy_unbounded_credit_payment' => '0',
-            ]))
-            ->assertSessionHasErrors('current_password');
-        $this->assertSame($oldCredentials, $supplier->fresh()->credentials);
-        $this->assertTrue(Cache::has($oldCacheKey));
 
         $this->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
             'code' => $supplier->code,
@@ -777,9 +660,7 @@ class AdminSupplierAccountTest extends TestCase
         ]);
 
         $this->actingAs($administrator)
-            ->post('/admin/suppliers/'.$supplier->id.'/test', [
-                'current_password' => 'admin-password',
-            ])
+            ->post('/admin/suppliers/test-active')
             ->assertRedirect()
             ->assertSessionHas('success');
 
@@ -819,9 +700,7 @@ class AdminSupplierAccountTest extends TestCase
         ]);
 
         $response = $this->actingAs($administrator)
-            ->post('/admin/suppliers/'.$supplier->id.'/test', [
-                'current_password' => 'admin-password',
-            ]);
+            ->post('/admin/suppliers/test-active');
 
         $response->assertRedirect()->assertSessionHasErrors('supplier');
         $tested = $supplier->fresh();
@@ -873,11 +752,9 @@ class AdminSupplierAccountTest extends TestCase
         });
 
         $response = $this->actingAs($administrator)
-            ->post('/admin/suppliers/'.$supplier->id.'/test', [
-                'current_password' => 'admin-password',
-            ]);
+            ->post('/admin/suppliers/test-active');
 
-        $response->assertStatus(409)->assertSessionHasErrors('supplier');
+        $response->assertRedirect()->assertSessionHasErrors('supplier');
         $current = $supplier->fresh();
         $this->assertSame('connection-race-new-code', $current->code);
         $this->assertSame('Newer configuration state', $current->last_error);

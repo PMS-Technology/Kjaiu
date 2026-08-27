@@ -1562,7 +1562,6 @@ class AdminSupplierCatalogTest extends TestCase
         SupplierAccount $supplier,
         array $mappings,
         int $page = 1,
-        string $currentPassword = 'admin-password',
     ) {
         $index = $this->actingAs($administrator)->get('/admin/suppliers?'.http_build_query([
             'mapping_account' => $supplier->id,
@@ -1571,7 +1570,6 @@ class AdminSupplierCatalogTest extends TestCase
         $index->assertOk();
 
         return $this->put('/admin/suppliers/'.$supplier->id.'/mappings', [
-            'current_password' => $currentPassword,
             'mapping_page' => $page,
             'mapping_page_token' => $index->viewData('mappingPageTokens')->get($supplier->id),
             'mappings' => $mappings,

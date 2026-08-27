@@ -22,9 +22,9 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -35,6 +35,8 @@ class SupplierController extends Controller
     private const MAPPINGS_PER_PAGE = 50;
 
     private const MAPPING_TOKEN_TTL_SECONDS = 7200;
+
+    private const CONNECTION_TEST_COOLDOWN_SECONDS = 300;
 
     private const CYCLES = [
         'free' => '免费',
@@ -286,6 +288,12 @@ class SupplierController extends Controller
             'mappingStates' => $mappingStates,
             'mappingTargets' => $mappingTargets,
             'cycles' => self::CYCLES,
+            'autoTestConnections' => ! $request->session()->pull('supplier_auto_tested', false)
+                && $accounts->contains(fn (SupplierAccount $account): bool => (
+                    $account->is_active
+                    && ($account->last_tested_at === null
+                        || $account->last_tested_at->lt(now()->subSeconds(self::CONNECTION_TEST_COOLDOWN_SECONDS)))
+                )),
         ]);
     }
 
@@ -294,7 +302,6 @@ class SupplierController extends Controller
         $sensitive = $this->takeSensitiveInput($request);
         $data = $this->validateAccount($request, $sensitive);
         $this->validateCredentials($sensitive, true);
-        $this->ensureCurrentPassword($request->user(), $sensitive['current_password']);
 
         $account = SupplierAccount::create([
             'code' => $data['code'],
@@ -357,6 +364,8 @@ class SupplierController extends Controller
             'keyword' => $keyword,
             'cycles' => self::CYCLES,
             'localCurrency' => strtoupper((string) config('kjaiu.currency.code', 'CNY')),
+            'autoSyncCatalog' => ! $request->hasAny(['q', 'page'])
+                && ! $request->session()->pull('supplier_catalog_synced_'.$supplier->getKey(), false),
         ]);
     }
 
@@ -366,8 +375,6 @@ class SupplierController extends Controller
         SupplierCatalogImportService $catalogImport,
     ): RedirectResponse {
         $this->requireSupportedAccount($supplier);
-        $currentPassword = $request->input('current_password');
-        $request->request->remove('current_password');
         $data = $request->validate([
             'product_group_id' => [
                 'required',
@@ -377,7 +384,6 @@ class SupplierController extends Controller
             'catalog_products' => ['required', 'array', 'min:1', 'max:50'],
             'catalog_products.*' => ['required', 'integer', 'distinct'],
         ]);
-        $this->validateCurrentPassword($request->user(), $currentPassword);
         $imported = $catalogImport->import(
             $request,
             $supplier,
@@ -421,7 +427,7 @@ class SupplierController extends Controller
                         '_form' => $request->input('_form'),
                     ], fn (mixed $value): bool => is_string($value) && $value !== ''));
                     throw ValidationException::withMessages([
-                        'supplier' => '供应商明文配置不能包含上游凭据或当前管理员密码',
+                        'supplier' => '供应商明文配置不能包含上游凭据',
                     ]);
                 }
                 $usernameChanged = $sensitive['username_provided']
@@ -443,11 +449,6 @@ class SupplierController extends Controller
                     || $codeChanged
                     || $activeStateChanged
                     || $legacyPaymentChanged;
-                $protectedChange = $credentialsChanged || $connectionIdentityChanged;
-
-                if ($protectedChange) {
-                    $this->ensureCurrentPassword($request->user(), $sensitive['current_password']);
-                }
                 if ($connectionIdentityChanged
                     && ($account->hasNonterminalOperations()
                         || $account->hasPendingOrderItemRoutes())) {
@@ -549,11 +550,52 @@ class SupplierController extends Controller
             ->with('success', '上游供应商配置已更新');
     }
 
-    public function test(Request $request, SupplierAccount $supplier): RedirectResponse
+    public function testActive(Request $request): RedirectResponse
     {
-        $this->requireSupportedAccount($supplier);
-        $currentPassword = $this->takeCurrentPassword($request);
-        $this->validateCurrentPassword($request->user(), $currentPassword);
+        $cutoff = now()->subSeconds(self::CONNECTION_TEST_COOLDOWN_SECONDS);
+        $accounts = SupplierAccount::query()
+            ->where('driver', SupplierAccount::DRIVER_IDCSMART_FINANCE)
+            ->where('is_active', true)
+            ->where(function ($query) use ($cutoff): void {
+                $query->whereNull('last_tested_at')->orWhere('last_tested_at', '<', $cutoff);
+            })
+            ->orderBy('id')
+            ->get();
+        $failed = 0;
+        foreach ($accounts as $account) {
+            $lock = Cache::lock('supplier:connection-test:'.$account->getKey(), 90);
+            if (! $lock->get()) {
+                continue;
+            }
+            try {
+                $freshAccount = SupplierAccount::query()->findOrFail($account->getKey());
+                if ($freshAccount->last_tested_at !== null
+                    && $freshAccount->last_tested_at->gte($cutoff)) {
+                    continue;
+                }
+                if (! $this->testConnection($request, $freshAccount)) {
+                    $failed++;
+                }
+            } finally {
+                $lock->release();
+            }
+        }
+
+        $redirect = redirect()->route('admin.suppliers.index')
+            ->with('supplier_auto_tested', true);
+        if ($failed > 0) {
+            return $redirect->withErrors([
+                'supplier' => "已自动检测上游连接，{$failed} 个账户连接失败",
+            ]);
+        }
+
+        return $redirect->with('success', $accounts->isEmpty()
+            ? '上游连接状态仍在有效期内'
+            : '已自动检测上游连接');
+    }
+
+    private function testConnection(Request $request, SupplierAccount $supplier): bool
+    {
         $testedCredentials = $this->savedCredentials($supplier);
         $testedAt = now();
         $fingerprint = $this->accountFingerprint($supplier);
@@ -596,11 +638,7 @@ class SupplierController extends Controller
         }, 3);
 
         $supplier = $result['account'];
-        $sensitive = array_merge(
-            $testedCredentials,
-            $result['credentials'],
-            [$currentPassword],
-        );
+        $sensitive = array_merge($testedCredentials, $result['credentials']);
         if ($result['conflict']) {
             $this->recordAudit(
                 $request,
@@ -611,9 +649,7 @@ class SupplierController extends Controller
                 $sensitive,
             );
 
-            return back()->withErrors([
-                'supplier' => '连接配置在测试期间已变更，测试结果未保存，请重新测试',
-            ])->setStatusCode(409);
+            return false;
         }
 
         $this->recordAudit(
@@ -625,13 +661,7 @@ class SupplierController extends Controller
             $sensitive,
         );
 
-        if (! $success) {
-            return back()->withErrors([
-                'supplier' => '连接测试失败，请检查已保存的地址和凭据',
-            ]);
-        }
-
-        return back()->with('success', '连接测试成功，登录和商品读取均正常');
+        return $success;
     }
 
     public function sync(
@@ -640,11 +670,15 @@ class SupplierController extends Controller
         SupplierCatalogSyncService $catalogSync,
     ): RedirectResponse {
         $this->requireSupportedAccount($supplier);
-        $currentPassword = $this->takeCurrentPassword($request);
-        $this->validateCurrentPassword($request->user(), $currentPassword);
         $credentials = $this->savedCredentials($supplier);
-        $sensitive = array_merge($credentials, [$currentPassword]);
+        $sensitive = $credentials;
         $fingerprint = $this->accountFingerprint($supplier);
+        $lock = Cache::lock('supplier:catalog-sync:'.$supplier->getKey(), 1800);
+        if (! $lock->get()) {
+            return redirect()->route('admin.suppliers.catalog', $supplier)
+                ->with('supplier_catalog_synced_'.$supplier->getKey(), true)
+                ->withErrors(['supplier' => '上游目录正在同步，当前显示最近一次成功同步的目录']);
+        }
         $this->recordAudit(
             $request,
             'supplier.catalog_sync_requested',
@@ -668,12 +702,14 @@ class SupplierController extends Controller
                     $currentSupplier,
                     null,
                     ['configuration_conflict' => true],
-                    array_merge($credentials, $currentCredentials, [$currentPassword]),
+                    array_merge($credentials, $currentCredentials),
                 );
 
-                return back()->withErrors([
-                    'supplier' => '连接配置在目录同步期间已变更，同步结果未保存，请重新同步',
-                ])->setStatusCode(409);
+                return redirect()->route('admin.suppliers.catalog', $supplier)
+                    ->with('supplier_catalog_synced_'.$supplier->getKey(), true)
+                    ->withErrors([
+                        'supplier' => '连接配置在目录同步期间已变更，正在显示最近一次同步的目录',
+                    ]);
             }
             $currentSupplier->forceFill([
                 'last_error' => $this->safeError($currentSupplier, $exception, $credentials),
@@ -684,12 +720,16 @@ class SupplierController extends Controller
                 $currentSupplier,
                 null,
                 ['success' => false],
-                array_merge($credentials, $currentCredentials, [$currentPassword]),
+                array_merge($credentials, $currentCredentials),
             );
 
-            return back()->withErrors([
-                'supplier' => '目录同步失败，原有目录和映射均未更改',
-            ]);
+            return redirect()->route('admin.suppliers.catalog', $supplier)
+                ->with('supplier_catalog_synced_'.$supplier->getKey(), true)
+                ->withErrors([
+                    'supplier' => '目录同步失败，正在显示最近一次成功同步的目录',
+                ]);
+        } finally {
+            $lock->release();
         }
 
         $supplier->refresh();
@@ -708,10 +748,9 @@ class SupplierController extends Controller
             $sensitive,
         );
 
-        return redirect()->route('admin.suppliers.catalog', $supplier)->with(
-            'success',
-            '上游目录同步完成，共读取 '.$result['product_count'].' 个商品',
-        );
+        return redirect()->route('admin.suppliers.catalog', $supplier)
+            ->with('supplier_catalog_synced_'.$supplier->getKey(), true)
+            ->with('success', '上游目录同步完成，共读取 '.$result['product_count'].' 个商品');
     }
 
     public function mappings(
@@ -723,7 +762,6 @@ class SupplierController extends Controller
         $mappingInput = $this->takeMappingInput($request);
         $mappingSecrets = $this->credentialValues([
             $this->savedCredentials($supplier),
-            [$mappingInput['current_password']],
         ]);
         if ($this->payloadContainsSensitiveValue($request->input('mappings'), $mappingSecrets)) {
             $request->replace(array_filter([
@@ -732,10 +770,9 @@ class SupplierController extends Controller
                 '_form' => $request->input('_form'),
             ], fn (mixed $value): bool => is_string($value) && $value !== ''));
             throw ValidationException::withMessages([
-                'mappings' => '映射提交不能包含管理员密码或上游凭据',
+                'mappings' => '映射提交不能包含上游凭据',
             ]);
         }
-        $this->validateCurrentPassword($request->user(), $mappingInput['current_password']);
         $data = $request->validate([
             'mappings' => ['required', 'array', 'min:1', 'max:'.self::MAPPINGS_PER_PAGE],
             'mappings.*' => ['required', 'array:product_id,local_billing_cycle,target'],
@@ -986,10 +1023,7 @@ class SupplierController extends Controller
                 'updated_pair_count' => $result['updated_count'],
                 'removed_pair_count' => $result['removed_count'],
             ],
-            array_merge(
-                $this->savedCredentials($supplier),
-                [$mappingInput['current_password']],
-            ),
+            $this->savedCredentials($supplier),
         );
 
         return back()->with('success', '上游商品周期映射已更新');
@@ -1122,7 +1156,7 @@ class SupplierController extends Controller
                 '_form' => $request->input('_form'),
             ], fn (mixed $value): bool => is_string($value) && $value !== ''));
             throw ValidationException::withMessages([
-                'supplier' => '供应商明文配置不能包含上游凭据或当前管理员密码',
+                'supplier' => '供应商明文配置不能包含上游凭据',
             ]);
         }
         $normalizedBaseUrl = $this->normalizeBaseUrl($sensitive['base_url']);
@@ -1162,7 +1196,6 @@ class SupplierController extends Controller
     {
         $username = $request->input('username');
         $password = $request->input('password');
-        $currentPassword = $request->input('current_password');
         $baseUrl = $request->input('base_url');
 
         $safeInput = $request->only([
@@ -1182,13 +1215,11 @@ class SupplierController extends Controller
         return [
             'username' => is_string($username) ? trim($username) : '',
             'password' => is_string($password) ? $password : '',
-            'current_password' => is_string($currentPassword) ? $currentPassword : '',
             'base_url' => $baseUrl,
             'username_provided' => is_string($username) && trim($username) !== '',
             'password_provided' => is_string($password) && $password !== '',
             'valid_types' => ($username === null || is_string($username))
-                && ($password === null || is_string($password))
-                && ($currentPassword === null || is_string($currentPassword)),
+                && ($password === null || is_string($password)),
         ];
     }
 
@@ -1210,53 +1241,14 @@ class SupplierController extends Controller
         if (strlen($sensitive['password']) > 4096) {
             $errors['password'] = '上游密码长度超出限制';
         }
-        if (strlen($sensitive['current_password']) > 1024) {
-            $errors['current_password'] = '当前管理员密码长度超出限制';
-        }
-
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
         }
     }
 
-    private function ensureCurrentPassword(?User $user, string $currentPassword): void
-    {
-        if ($user === null
-            || $currentPassword === ''
-            || ! Hash::check($currentPassword, $user->password)) {
-            throw ValidationException::withMessages([
-                'current_password' => '创建账户或修改上游地址、凭据、状态或高风险兼容选项时需要输入正确的当前密码',
-            ]);
-        }
-    }
-
-    private function validateCurrentPassword(?User $user, mixed $currentPassword): void
-    {
-        if (! is_string($currentPassword) || strlen($currentPassword) > 1024) {
-            throw ValidationException::withMessages([
-                'current_password' => '请输入正确的当前管理员密码',
-            ]);
-        }
-
-        $this->ensureCurrentPassword($user, $currentPassword);
-    }
-
-    private function takeCurrentPassword(Request $request): mixed
-    {
-        $currentPassword = $request->input('current_password');
-        $request->replace(array_filter([
-            '_token' => $request->input('_token'),
-            '_method' => $request->input('_method'),
-            '_form' => $request->input('_form'),
-        ], fn (mixed $value): bool => is_string($value) && $value !== ''));
-
-        return $currentPassword;
-    }
-
     private function takeMappingInput(Request $request): array
     {
         $input = [
-            'current_password' => $request->input('current_password'),
             'page_token' => $request->input('mapping_page_token'),
             'page' => $request->input('mapping_page'),
         ];
@@ -1696,7 +1688,6 @@ class SupplierController extends Controller
         return array_values(array_filter([
             $sensitive['username'] ?? null,
             $sensitive['password'] ?? null,
-            $sensitive['current_password'] ?? null,
         ], fn (mixed $value): bool => is_string($value) && $value !== ''));
     }
 

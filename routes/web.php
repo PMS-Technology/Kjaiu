@@ -80,9 +80,9 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'active', 'admin'])-
     Route::put('/services/{service}', [ServiceController::class, 'update'])->name('services.update');
 
     Route::get('/suppliers', [SupplierController::class, 'index'])->name('suppliers.index');
+    Route::post('/suppliers/test-active', [SupplierController::class, 'testActive'])->middleware('throttle:supplier-sensitive')->name('suppliers.test-active');
     Route::post('/suppliers', [SupplierController::class, 'store'])->middleware('throttle:supplier-sensitive')->name('suppliers.store');
     Route::put('/suppliers/{supplier}', [SupplierController::class, 'update'])->whereNumber('supplier')->middleware('throttle:supplier-sensitive')->name('suppliers.update');
-    Route::post('/suppliers/{supplier}/test', [SupplierController::class, 'test'])->whereNumber('supplier')->middleware('throttle:supplier-sensitive')->name('suppliers.test');
     Route::post('/suppliers/{supplier}/catalog-sync', [SupplierController::class, 'sync'])->whereNumber('supplier')->middleware('throttle:supplier-sensitive')->name('suppliers.catalog-sync');
     Route::get('/suppliers/{supplier}/catalog', [SupplierController::class, 'catalog'])->whereNumber('supplier')->name('suppliers.catalog');
     Route::post('/suppliers/{supplier}/catalog-import', [SupplierController::class, 'importCatalog'])->whereNumber('supplier')->middleware('throttle:supplier-sensitive')->name('suppliers.catalog-import');

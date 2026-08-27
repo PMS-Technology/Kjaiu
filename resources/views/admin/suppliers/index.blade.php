@@ -9,6 +9,9 @@
 @endsection
 
 @section('content')
+    @if($autoTestConnections)
+        <form method="POST" action="{{ route('admin.suppliers.test-active') }}" data-auto-submit hidden>@csrf</form>
+    @endif
     <section class="summary-strip">
         <div><span>供应商账户</span><strong>{{ $accounts->count() }}</strong></div>
         <i></i>
@@ -50,19 +53,11 @@
                         <button class="row-action" type="button" data-dialog-open="supplier-{{ $account->id }}">配置账户</button>
                     </footer>
                     <div class="row-actions" style="margin-top: 14px; justify-content: flex-start; flex-wrap: wrap">
-                        <form method="POST" action="{{ route('admin.suppliers.test', $account) }}" class="row-actions" style="align-items: end">
-                            @csrf
-                            <input type="hidden" name="_form" value="supplier-test-{{ $account->id }}">
-                            <label class="field"><span>当前管理员密码</span><input type="password" name="current_password" value="" required autocomplete="current-password"></label>
-                            <button class="button button-secondary" type="submit">测试已保存连接</button>
-                        </form>
-                        <form method="POST" action="{{ route('admin.suppliers.catalog-sync', $account) }}" class="row-actions" style="align-items: end">
+                        <form method="POST" action="{{ route('admin.suppliers.catalog-sync', $account) }}">
                             @csrf
                             <input type="hidden" name="_form" value="supplier-sync-{{ $account->id }}">
-                            <label class="field"><span>当前管理员密码</span><input type="password" name="current_password" value="" required autocomplete="current-password"></label>
-                            <button class="button button-secondary" type="submit">同步上游目录</button>
+                            <button class="button button-secondary" type="submit">选择导入商品</button>
                         </form>
-                        <a class="button button-secondary" href="{{ route('admin.suppliers.catalog', $account) }}">选择导入商品</a>
                         <button class="button button-primary" type="button" data-dialog-open="supplier-mappings-{{ $account->id }}">配置周期映射</button>
                     </div>
                 </article>
@@ -83,13 +78,12 @@
                                 <label class="field field-full"><span>Finance 基础地址 <small>仅 HTTPS，不含凭据或查询参数</small></span><input type="url" name="base_url" value="{{ old('_form') === 'supplier-'.$account->id ? old('base_url') : $state['base_url'] }}" maxlength="2048" required placeholder="https://finance.example.com"></label>
                                 <label class="field"><span>登录标识 <small>留空保留 {{ $state['identifier'] }}</small></span><input name="username" value="" maxlength="191" autocomplete="off"></label>
                                 <label class="field"><span>上游密码 <small>留空保留已保存密码</small></span><input type="password" name="password" value="" maxlength="4096" autocomplete="new-password"></label>
-                                <label class="field field-full"><span>当前管理员密码 <small>凭据可在待处理操作期间轮换；地址、代码、状态和策略仍锁定</small></span><input type="password" name="current_password" value="" autocomplete="current-password"></label>
                                 <div class="toggle-stack field-full">
                                     <input type="hidden" name="is_active" value="0">
                                     <label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked(old('_form') === 'supplier-'.$account->id ? old('is_active') : $account->is_active)><span></span><b>启用该供应商账户</b></label>
                                     <input type="hidden" name="allow_legacy_unbounded_credit_payment" value="0">
                                     <label class="switch-field"><input type="checkbox" name="allow_legacy_unbounded_credit_payment" value="1" @checked(old('_form') === 'supplier-'.$account->id ? old('allow_legacy_unbounded_credit_payment') : $state['allow_legacy_unbounded_credit_payment'])><span></span><b>高风险兼容：允许旧版接口自动扣上游余额</b></label>
-                                    <small class="field-hint">危险：旧版 `/apply_credit` 不支持预期金额、币种、账单版本或幂等前置条件，冻结报价无法原子限制实际扣款。启用或关闭都必须验证当前管理员密码，且存在未终结操作或待结算路由时禁止更改。</small>
+                                    <small class="field-hint">危险：旧版 `/apply_credit` 不支持预期金额、币种、账单版本或幂等前置条件，冻结报价无法原子限制实际扣款。存在未终结操作或待结算路由时禁止更改。</small>
                                 </div>
                             </div>
                         </div>
@@ -185,7 +179,6 @@
                             @if($mappingPage->hasPages())
                                 <div class="pagination-wrap">{{ $mappingPage->links() }}</div>
                             @endif
-                            <label class="field field-full"><span>当前管理员密码 <small>确认本页路由变更</small></span><input type="password" name="current_password" value="" required autocomplete="current-password"></label>
                         </div>
                         <footer class="modal-foot"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit" @disabled($mappingPage->isEmpty())>保存本页映射</button></footer>
                     </form>
@@ -212,7 +205,6 @@
                     <label class="field field-full"><span>Finance 基础地址 <small>强制 HTTPS 和证书校验</small></span><input type="url" name="base_url" value="{{ old('_form') === 'supplier-create' ? old('base_url') : '' }}" maxlength="2048" required placeholder="https://finance.example.com"></label>
                     <label class="field"><span>登录标识</span><input name="username" value="" maxlength="191" required autocomplete="off"></label>
                     <label class="field"><span>上游密码</span><input type="password" name="password" value="" maxlength="4096" required autocomplete="new-password"></label>
-                    <label class="field field-full"><span>当前管理员密码 <small>确认新增敏感供应商配置</small></span><input type="password" name="current_password" value="" required autocomplete="current-password"></label>
                     <div class="toggle-stack field-full">
                         <input type="hidden" name="is_active" value="0">
                         <label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked(old('_form') === 'supplier-create' ? old('is_active') : true)><span></span><b>创建后立即启用</b></label>

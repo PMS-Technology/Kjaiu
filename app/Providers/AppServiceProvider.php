@@ -34,7 +34,7 @@ class AppServiceProvider extends ServiceProvider
             );
             $limits = [Limit::perMinute(10)->by($key)->response($response)];
 
-            if ($request->routeIs('admin.suppliers.test')) {
+            if ($request->routeIs('admin.suppliers.test-active')) {
                 $limits[] = Limit::perMinute(5)->by($key.'|test')->response($response);
             } elseif ($request->routeIs('admin.suppliers.catalog-sync')) {
                 $limits[] = Limit::perMinute(2)->by($key.'|catalog-sync')->response($response);
