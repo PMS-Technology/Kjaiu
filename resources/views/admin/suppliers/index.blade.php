@@ -2,7 +2,7 @@
 
 @section('title', '上游供应商')
 @section('eyebrow', 'KJAIU / SUPPLIER CONTROL')
-@section('description', '安全配置 IDCsmart Finance 账户，同步上游目录并按本地付款周期建立商品映射。')
+@section('description', '安全配置 IDCsmart Finance 账户，自动刷新目录并按本地付款周期建立商品映射。')
 
 @section('actions')
     <button class="button button-primary" type="button" data-dialog-open="supplier-create">新增账户 <span>＋</span></button>

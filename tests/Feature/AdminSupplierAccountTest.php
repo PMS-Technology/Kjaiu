@@ -135,7 +135,7 @@ class AdminSupplierAccountTest extends TestCase
         $response = $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync');
         $response->assertTooManyRequests();
         $this->assertSame('Too many supplier administration attempts.', $response->getContent());
-        Http::assertSentCount(2);
+        Http::assertSentCount(0);
     }
 
     public function test_only_idcsmart_finance_with_tls_verification_can_be_managed(): void
@@ -502,7 +502,8 @@ class AdminSupplierAccountTest extends TestCase
             'status' => SupplierOperation::STATUS_SUCCEEDED,
             'finished_at' => now(),
         ]);
-        $this->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
+        $this->actingAs($administrator)
+            ->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
             'name' => 'Terminal update',
             'code' => $supplier->code,
             'base_url' => 'https://terminal-supplier.example.com',
@@ -576,14 +577,14 @@ class AdminSupplierAccountTest extends TestCase
         $newCacheKey = $this->jwtCacheKey($supplier, $newCredentials);
         Cache::put($newCacheKey, Crypt::encryptString('new-private-jwt'), 7200);
 
-        $this->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
+        $this->actingAs($administrator)
+            ->put('/admin/suppliers/'.$supplier->id, $this->accountPayload([
             'code' => $supplier->code,
             'base_url' => $supplier->base_url,
             'username' => $newCredentials['username'],
             'password' => $newCredentials['password'],
-            'current_password' => 'admin-password',
             'allow_legacy_unbounded_credit_payment' => '1',
-        ]))->assertSessionHasErrors('supplier');
+            ]))->assertSessionHasErrors('supplier');
         $this->assertSame($oldCredentials, $supplier->fresh()->credentials);
         $this->assertFalse($supplier->fresh()->allowsLegacyUnboundedCreditPayment());
         $this->assertTrue(Cache::has($oldCacheKey));
@@ -593,7 +594,6 @@ class AdminSupplierAccountTest extends TestCase
             'base_url' => $supplier->base_url,
             'username' => $newCredentials['username'],
             'password' => $newCredentials['password'],
-            'current_password' => 'admin-password',
             'allow_legacy_unbounded_credit_payment' => '0',
         ]));
         $response->assertRedirect(route('admin.suppliers.index'))->assertSessionHas('success');

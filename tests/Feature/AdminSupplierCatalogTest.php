@@ -475,7 +475,8 @@ class AdminSupplierCatalogTest extends TestCase
                 'current_password' => 'admin-password',
             ]);
 
-        $response->assertStatus(409)->assertSessionHasErrors('supplier');
+        $response->assertRedirect('/admin/suppliers/'.$supplier->id.'/catalog')
+            ->assertSessionHasErrors('supplier');
         $current = $supplier->fresh();
         $this->assertSame('catalog-race-new-code', $current->code);
         $this->assertSame('Newer catalog configuration state', $current->last_error);
