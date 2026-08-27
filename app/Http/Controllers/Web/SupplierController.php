@@ -744,13 +744,19 @@ class SupplierController extends Controller
                 'active_product_count' => $result['active_count'],
                 'deactivated_product_count' => $result['deactivated_product_count'],
                 'deactivated_mapping_count' => $result['deactivated_mapping_count'],
+                'catalog_complete' => $result['catalog_complete'],
             ],
             $sensitive,
         );
 
+        $message = '上游目录同步完成，共读取 '.$result['product_count'].' 个商品';
+        if (! $result['catalog_complete']) {
+            $message .= '；上游未提供分页信息，未停用本次未返回的原有商品和映射';
+        }
+
         return redirect()->route('admin.suppliers.catalog', $supplier)
             ->with('supplier_catalog_synced_'.$supplier->getKey(), true)
-            ->with('success', '上游目录同步完成，共读取 '.$result['product_count'].' 个商品');
+            ->with('success', $message);
     }
 
     public function mappings(

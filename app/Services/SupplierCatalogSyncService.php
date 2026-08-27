@@ -34,7 +34,9 @@ class SupplierCatalogSyncService
         $fingerprint = $this->accountFingerprint($account);
         $sensitiveValues = $this->sensitiveValues($account->credentials ?? []);
         $client = new FinanceClient($account);
-        $productIds = $this->fetchProductIds($client);
+        $catalog = $this->fetchProductIds($client);
+        $productIds = $catalog['product_ids'];
+        $catalogComplete = $catalog['complete'];
         $products = [];
 
         foreach ($productIds as $productId) {
@@ -64,6 +66,7 @@ class SupplierCatalogSyncService
             $fingerprint,
             $productIds,
             $products,
+            $catalogComplete,
             $syncedAt,
         ): array {
             $lockedAccount = SupplierAccount::query()->lockForUpdate()->findOrFail($account->getKey());
@@ -86,10 +89,12 @@ class SupplierCatalogSyncService
             $guardedMappingIds = [];
             $deactivatedProductCount = $existingProducts->filter(function (
                 SupplierCatalogProduct $product,
-            ) use ($incomingProducts): bool {
+            ) use ($incomingProducts, $catalogComplete): bool {
                 $incoming = $incomingProducts->get($product->upstream_product_id);
 
-                return $product->is_active && ($incoming === null || ! $incoming['is_active']);
+                return $product->is_active
+                    && (($catalogComplete && $incoming === null)
+                        || ($incoming !== null && ! $incoming['is_active']));
             })->count();
 
             foreach ($mappings as $mapping) {
@@ -99,15 +104,19 @@ class SupplierCatalogSyncService
                     : $incomingProducts->get($catalogProduct->upstream_product_id);
                 $catalogWillDeactivate = $catalogProduct !== null
                     && $catalogProduct->is_active
-                    && ($incoming === null || ! $incoming['is_active']);
+                    && (($catalogComplete && $incoming === null)
+                        || ($incoming !== null && ! $incoming['is_active']));
                 $mappingWillDeactivate = $mapping->is_active
-                    && ($incoming === null
-                        || ! $incoming['is_active']
-                        || ! in_array(
-                            $mapping->upstream_billing_cycle,
-                            $incoming['billing_cycles'],
-                            true,
-                        ));
+                    && (
+                        ($catalogComplete && $incoming === null)
+                        || ($incoming !== null
+                            && (! $incoming['is_active']
+                                || ! in_array(
+                                    $mapping->upstream_billing_cycle,
+                                    $incoming['billing_cycles'],
+                                    true,
+                                )))
+                    );
 
                 if ($catalogWillDeactivate || $mappingWillDeactivate) {
                     $guardedMappingIds[] = $mapping->id;
@@ -144,7 +153,8 @@ class SupplierCatalogSyncService
 
             $productIdLookup = array_fill_keys($productIds, true);
             foreach ($existingProducts as $existingProduct) {
-                if (array_key_exists($existingProduct->upstream_product_id, $productIdLookup)) {
+                if (! $catalogComplete
+                    || array_key_exists($existingProduct->upstream_product_id, $productIdLookup)) {
                     continue;
                 }
 
@@ -175,6 +185,7 @@ class SupplierCatalogSyncService
                 'active_count' => collect($products)->where('is_active', true)->count(),
                 'deactivated_product_count' => $deactivatedProductCount,
                 'deactivated_mapping_count' => count($mappingIdsToDeactivate),
+                'catalog_complete' => $catalogComplete,
                 'synced_at' => $syncedAt,
             ];
         }, 3);
@@ -292,9 +303,16 @@ class SupplierCatalogSyncService
                 $signals[] = true;
             }
             if ($signals === []) {
-                throw new RuntimeException(
-                    'The supplier catalog did not prove that its response was complete.',
-                );
+                if ($pageIds === []) {
+                    throw new RuntimeException(
+                        'The supplier catalog did not prove that its empty response was complete.',
+                    );
+                }
+
+                return [
+                    'product_ids' => array_values($productIds),
+                    'complete' => false,
+                ];
             }
 
             $hasNext = $signals[0];
@@ -323,7 +341,10 @@ class SupplierCatalogSyncService
             throw new RuntimeException('The supplier catalog pagination is incomplete.');
         }
 
-        return array_values($productIds);
+        return [
+            'product_ids' => array_values($productIds),
+            'complete' => true,
+        ];
     }
 
     private function extractProductIds(array $list): array

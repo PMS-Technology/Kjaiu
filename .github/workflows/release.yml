@@ -98,7 +98,6 @@ jobs:
             .env.example \
             LICENSE \
             README.md \
-            README.zh-CN.md \
             app \
             artisan \
             bootstrap \

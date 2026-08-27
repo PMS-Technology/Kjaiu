@@ -656,6 +656,71 @@ class AdminSupplierCatalogTest extends TestCase
         Http::assertSentCount(2);
     }
 
+    public function test_unpaginated_catalog_updates_returned_products_without_retiring_missing_products(): void
+    {
+        $administrator = $this->administrator();
+        $supplier = $this->supplier();
+        $existing = SupplierCatalogProduct::createForAccount($supplier, [
+            'upstream_product_id' => 'existing-product',
+            'name' => 'Existing product',
+            'billing_cycles' => ['monthly'],
+        ]);
+        $mapping = SupplierProductMapping::createFor(
+            $supplier,
+            $existing,
+            $this->localProduct('unpaginated-catalog'),
+            [
+                'local_billing_cycle' => 'monthly',
+                'upstream_billing_cycle' => 'monthly',
+            ],
+        );
+
+        Http::fake(function (ClientRequest $request) {
+            return match (parse_url($request->url(), PHP_URL_PATH)) {
+                '/zjmf_api_login' => $this->financeResponse([
+                    'status' => 200,
+                    'jwt' => 'standalone-count-jwt',
+                ]),
+                '/api/product/list' => $this->financeResponse([
+                    'status' => 200,
+                    'data' => [
+                        'list' => [['id' => 'standalone-count-product']],
+                        'currency_code' => 'CNY',
+                    ],
+                ]),
+                '/api/product/standalone-count-product' => $this->financeResponse([
+                    'status' => 200,
+                    'data' => ['product' => [
+                        'id' => 'standalone-count-product',
+                        'name' => 'Standalone count product',
+                        'billingcycle' => 'monthly',
+                        'product_price' => '10.00',
+                    ]],
+                ]),
+                default => $this->financeResponse(['status' => 404, 'msg' => 'unexpected']),
+            };
+        });
+
+        $this->actingAs($administrator)
+            ->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')
+            ->assertRedirect()
+            ->assertSessionHas('success', function (string $message): bool {
+                return str_contains($message, '未停用本次未返回的原有商品和映射');
+            });
+
+        $this->assertDatabaseHas('supplier_catalog_products', [
+            'supplier_account_id' => $supplier->id,
+            'upstream_product_id' => 'standalone-count-product',
+            'name' => 'Standalone count product',
+        ]);
+        $this->assertTrue($existing->fresh()->is_active);
+        $this->assertTrue($mapping->fresh()->is_active);
+        $this->assertNotNull($supplier->fresh()->last_catalog_synced_at);
+        $audit = AuditLog::query()->where('action', 'supplier.catalog_sync_succeeded')->sole();
+        $this->assertFalse($audit->after['catalog_complete']);
+        Http::assertSentCount(3);
+    }
+
     public function test_explicit_unpaginated_completeness_requires_both_flags(): void
     {
         $administrator = $this->administrator();
