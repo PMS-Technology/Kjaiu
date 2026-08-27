@@ -612,6 +612,7 @@ class AdminSupplierOperationTest extends TestCase
             ->assertDontSee('action="'.url($this->creditPath($fixture['operation'])).'"', false)
             ->assertDontSee('machine-password-manual-attestation');
 
+        $requestStartedAt = now()->startOfSecond();
         $this->post($this->attestationPath($fixture['operation']), $this->confirmedPayload([
             'upstream_host_id' => 'host-manual-attestation',
         ]))->assertRedirect(route('admin.supplier-operations.index'))
@@ -622,7 +623,7 @@ class AdminSupplierOperationTest extends TestCase
         $metadata = $operation->metadata;
         $this->assertSame(SupplierOperation::STATUS_AWAITING_CONFIRMATION, $operation->status);
         $this->assertSame('awaiting_confirmation', $operation->step);
-        $this->assertTrue($operation->available_at->isCurrentSecond());
+        $this->assertTrue($operation->available_at->betweenIncluded($requestStartedAt, now()));
         $this->assertSame('Pending', $fixture['service']->fresh()->status);
         $this->assertNull($fixture['service']->fresh()->activated_at);
         $this->assertSame('Paid', $fixture['invoiceLink']->fresh()->upstream_status);
@@ -926,6 +927,7 @@ class AdminSupplierOperationTest extends TestCase
             });
         });
 
+        $requestStartedAt = now()->startOfSecond();
         $this->actingAs($this->administrator())
             ->post($this->hostPath($fixture['operation']), $this->confirmedPayload([
                 'upstream_host_id' => 'host-paid-reconciliation',
@@ -937,7 +939,7 @@ class AdminSupplierOperationTest extends TestCase
         $this->assertSame('awaiting_confirmation', $operation->step);
         $this->assertTrue($operation->metadata['payment_confirmed']);
         $this->assertSame('Pending', $fixture['service']->fresh()->status);
-        $this->assertTrue($operation->available_at->isCurrentSecond());
+        $this->assertTrue($operation->available_at->betweenIncluded($requestStartedAt, now()));
         $this->assertSame('host-paid-reconciliation', $operation->serviceLink->upstream_service_id);
     }
 
