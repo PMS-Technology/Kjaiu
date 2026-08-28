@@ -41,7 +41,7 @@
                         <td data-label="余额" class="money-cell">¥{{ number_format((float) $customer->credit, 2) }}</td>
                         <td data-label="服务 / 账单"><span class="split-number"><strong>{{ $customer->services_count }}</strong> 服务</span><span class="split-number"><strong>{{ $customer->invoices_count }}</strong> 账单</span></td>
                         <td data-label="状态"><span class="status status-{{ strtolower($customer->status) }}">{{ $customer->status === 'Active' ? '正常' : '已停用' }}</span></td>
-                        <td data-label="操作" class="align-right"><a class="row-action" href="{{ route('admin.customers.index', ['edit' => $customer->id, 'q' => $keyword]) }}">编辑 →</a></td>
+                        <td data-label="操作" class="align-right"><div class="row-actions">@if($customer->role === 'client' && $customer->status === 'Active')<button class="row-action" type="button" data-dialog-open="balance-{{ $customer->id }}">修改余额</button>@endif<a class="row-action" href="{{ route('admin.customers.index', ['edit' => $customer->id, 'q' => $keyword]) }}">编辑 →</a></div></td>
                     </tr>
                 @empty
                     <tr><td colspan="7"><div class="empty-state"><span>US</span><h3>没有找到用户</h3><p>调整搜索条件，或创建第一个用户账户。</p></div></td></tr>
@@ -51,6 +51,7 @@
         </div>
         <div class="pagination-wrap">{{ $customers->links() }}</div>
     </section>
+    @foreach($customers->where('role', 'client')->where('status', 'Active') as $customer)<dialog class="modal" id="balance-{{ $customer->id }}"><form method="POST" action="{{ route('admin.customers.balance', $customer) }}" data-confirm="确认修改该用户余额？系统将自动生成资金流水和操作记录。">@csrf @method('PATCH')<header class="modal-head"><div><p class="panel-kicker">BALANCE #{{ $customer->id }}</p><h2>修改 {{ $customer->name }} 的余额</h2></div><button type="button" data-dialog-close>×</button></header><div class="modal-body form-grid"><label class="field"><span>当前余额</span><input value="{{ $customer->credit }}" disabled></label><label class="field"><span>修改后余额</span><input type="number" name="balance" value="{{ $customer->credit }}" min="0" step="0.01" required></label><label class="field field-full"><span>修改原因</span><textarea name="reason" required maxlength="1000" rows="3"></textarea></label></div><footer class="modal-foot"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary">确认修改</button></footer></form></dialog>@endforeach
 
     <dialog class="modal" id="customer-dialog" @if($editing || ($errors->any() && old('_form') === 'customer')) open @endif>
         <form method="POST" action="{{ $editing ? route('admin.customers.update', $editing) : route('admin.customers.store') }}">

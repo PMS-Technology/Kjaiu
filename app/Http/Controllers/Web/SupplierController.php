@@ -139,10 +139,12 @@ class SupplierController extends Controller
                 'base_url' => $this->safeBaseUrl($account->base_url, $credentials),
                 'code' => $this->safeDisplayValue($account->code, $credentials, '代码已安全隐藏'),
                 'identifier' => $this->maskIdentifier($credentials['username'] ?? null),
+                'identifier_visible' => $this->safeDisplayValue($credentials['username'] ?? null, [$credentials['password'] ?? ''], '未配置'),
                 'name' => $this->safeDisplayValue($account->name, $credentials, '名称已安全隐藏'),
                 'password_configured' => filled($credentials['password'] ?? null),
                 'allow_legacy_unbounded_credit_payment' => $account
                     ->allowsLegacyUnboundedCreditPayment(),
+                'verify_tls' => $account->verifiesTls(),
             ]];
         });
         $mappingPages = $accounts->mapWithKeys(function (SupplierAccount $account) use (
@@ -313,7 +315,7 @@ class SupplierController extends Controller
                 'password' => $sensitive['password'],
             ],
             'options' => [
-                'verify_tls' => true,
+                'verify_tls' => $data['verify_tls'],
                 'allow_legacy_unbounded_credit_payment' => $data[
                     'allow_legacy_unbounded_credit_payment'
                 ],
@@ -375,6 +377,7 @@ class SupplierController extends Controller
         SupplierCatalogImportService $catalogImport,
     ): RedirectResponse {
         $this->requireSupportedAccount($supplier);
+        $request->merge(['exchange_rate' => $request->input('exchange_rate', '1')]);
         $data = $request->validate([
             'product_group_id' => [
                 'required',
@@ -383,6 +386,7 @@ class SupplierController extends Controller
             ],
             'catalog_products' => ['required', 'array', 'min:1', 'max:50'],
             'catalog_products.*' => ['required', 'integer', 'distinct'],
+            'exchange_rate' => ['required', 'numeric', 'regex:/^\d{1,4}(?:\.\d{1,6})?$/', 'gt:0', 'max:9999.999999'],
         ]);
         $imported = $catalogImport->import(
             $request,
@@ -390,6 +394,7 @@ class SupplierController extends Controller
             ProductGroup::query()->findOrFail($data['product_group_id']),
             $request->user(),
             array_map('intval', $data['catalog_products']),
+            (string) $data['exchange_rate'],
         );
 
         return redirect()->route('admin.suppliers.catalog', $supplier)->with(
@@ -443,12 +448,14 @@ class SupplierController extends Controller
                 $activeStateChanged = $account->is_active !== $data['is_active'];
                 $legacyPaymentChanged = $account->allowsLegacyUnboundedCreditPayment()
                     !== $data['allow_legacy_unbounded_credit_payment'];
+                $tlsChanged = $account->verifiesTls() !== $data['verify_tls'];
                 $credentialsChanged = $usernameChanged || $passwordChanged;
                 $connectionIdentityChanged = $baseUrlChanged
                     || $driverChanged
                     || $codeChanged
                     || $activeStateChanged
-                    || $legacyPaymentChanged;
+                    || $legacyPaymentChanged
+                    || $tlsChanged;
                 if ($connectionIdentityChanged
                     && ($account->hasNonterminalOperations()
                         || $account->hasPendingOrderItemRoutes())) {
@@ -485,11 +492,12 @@ class SupplierController extends Controller
                 if ($usernameChanged || $passwordChanged) {
                     $attributes['credentials'] = $credentials;
                 }
-                if ($legacyPaymentChanged) {
+                if ($legacyPaymentChanged || $tlsChanged) {
                     $options = is_array($account->options) ? $account->options : [];
                     $options['allow_legacy_unbounded_credit_payment'] = $data[
                         'allow_legacy_unbounded_credit_payment'
                     ];
+                    $options['verify_tls'] = $data['verify_tls'];
                     $attributes['options'] = $options;
                 }
                 $previousConnection = clone $account;
@@ -508,6 +516,7 @@ class SupplierController extends Controller
                     'passwordChanged',
                     'credentialsChanged',
                     'legacyPaymentChanged',
+                    'tlsChanged',
                 );
             }, 3);
         } catch (DomainException $exception) {
@@ -538,6 +547,7 @@ class SupplierController extends Controller
                 'credential_identifier_changed' => $usernameChanged,
                 'credential_password_changed' => $passwordChanged,
                 'legacy_unbounded_credit_payment_changed' => $result['legacyPaymentChanged'],
+                'tls_verification_changed' => $result['tlsChanged'],
             ],
             array_merge(
                 array_values($previousCredentials),
@@ -1133,6 +1143,7 @@ class SupplierController extends Controller
             'allow_legacy_unbounded_credit_payment',
             $account?->allowsLegacyUnboundedCreditPayment() ?? false,
         );
+        $verifyTls = $request->input('verify_tls', $account?->verifiesTls() ?? true);
         $name = is_string($request->input('name'))
             ? trim($request->input('name'))
             : $request->input('name');
@@ -1172,6 +1183,7 @@ class SupplierController extends Controller
             'code' => $code,
             'base_url' => $normalizedBaseUrl,
             'allow_legacy_unbounded_credit_payment' => $legacyCreditPayment,
+            'verify_tls' => $verifyTls,
         ]);
 
         $data = $request->validate([
@@ -1186,11 +1198,12 @@ class SupplierController extends Controller
             'driver' => ['required', Rule::in([SupplierAccount::DRIVER_IDCSMART_FINANCE])],
             'base_url' => ['required', 'string', 'max:2048'],
             'is_active' => ['required', 'boolean'],
-            'verify_tls' => ['sometimes', 'accepted'],
+            'verify_tls' => ['required', 'boolean'],
             'tls_verify' => ['sometimes', 'accepted'],
             'allow_legacy_unbounded_credit_payment' => ['required', 'boolean'],
         ]);
         $data['is_active'] = $request->boolean('is_active');
+        $data['verify_tls'] = $request->boolean('verify_tls');
         $data['allow_legacy_unbounded_credit_payment'] = $request->boolean(
             'allow_legacy_unbounded_credit_payment',
         );
@@ -1576,6 +1589,7 @@ class SupplierController extends Controller
             'is_active' => $account->is_active,
             'allow_legacy_unbounded_credit_payment' => $account
                 ->allowsLegacyUnboundedCreditPayment(),
+            'verify_tls' => $account->verifiesTls(),
         ];
 
         return $this->sanitizeAuditPayload($state, $sensitiveValues);

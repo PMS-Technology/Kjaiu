@@ -725,7 +725,7 @@ class FinanceClient
                 throw new FinanceException('The supplier destination is not publicly routable.');
             }
 
-            return ['verify' => true, 'proxy' => ''];
+            return ['verify' => $this->account->verifiesTls(), 'proxy' => ''];
         }
 
         try {
@@ -755,7 +755,7 @@ class FinanceClient
             : $address;
 
         return [
-            'verify' => true,
+            'verify' => $this->account->verifiesTls(),
             'proxy' => '',
             'curl' => [
                 CURLOPT_RESOLVE => [

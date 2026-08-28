@@ -22,6 +22,7 @@ class SupplierCatalogImportService
         ProductGroup $group,
         User $administrator,
         array $catalogProductIds,
+        string $exchangeRate = '1',
     ): array {
         return DB::transaction(function () use (
             $request,
@@ -29,6 +30,7 @@ class SupplierCatalogImportService
             $group,
             $administrator,
             $catalogProductIds,
+            $exchangeRate,
         ): array {
             $account = SupplierAccount::query()->lockForUpdate()->findOrFail($account->getKey());
             if (! $account->is_active) {
@@ -56,6 +58,17 @@ class SupplierCatalogImportService
                 ]);
             }
 
+            $localCurrency = strtoupper((string) config('kjaiu.currency.code', 'CNY'));
+            $foreignCurrencies = $catalogProducts
+                ->map(fn (SupplierCatalogProduct $product): string => strtoupper((string) $product->currency))
+                ->reject(fn (string $currency): bool => $currency === $localCurrency)
+                ->unique();
+            if ($foreignCurrencies->count() > 1) {
+                throw ValidationException::withMessages([
+                    'catalog_products' => '一次只能导入一种外币商品，请按币种分批导入并填写对应汇率。',
+                ]);
+            }
+
             $existingImports = SupplierCatalogImport::query()
                 ->whereIn('supplier_catalog_product_id', $catalogProductIds)
                 ->lockForUpdate()
@@ -66,7 +79,6 @@ class SupplierCatalogImportService
                 ]);
             }
 
-            $localCurrency = strtoupper((string) config('kjaiu.currency.code', 'CNY'));
             $imported = [];
             foreach ($catalogProducts as $catalogProduct) {
                 if (! $catalogProduct->is_active) {
@@ -74,13 +86,9 @@ class SupplierCatalogImportService
                         'catalog_products' => "上游商品 {$catalogProduct->name} 已停用。",
                     ]);
                 }
-                if (strtoupper((string) $catalogProduct->currency) !== $localCurrency) {
-                    throw ValidationException::withMessages([
-                        'catalog_products' => "上游商品 {$catalogProduct->name} 的币种与本地币种不一致。",
-                    ]);
-                }
-
-                $prices = $this->prices($catalogProduct);
+                $upstreamCurrency = strtoupper((string) $catalogProduct->currency);
+                $rate = $upstreamCurrency === $localCurrency ? '1' : $exchangeRate;
+                $prices = $this->prices($catalogProduct, $rate);
                 if ($prices === []) {
                     throw ValidationException::withMessages([
                         'catalog_products' => "上游商品 {$catalogProduct->name} 没有可导入的价格周期。",
@@ -103,6 +111,9 @@ class SupplierCatalogImportService
                     'metadata' => [
                         'supplier_catalog_product_id' => $catalogProduct->getKey(),
                         'supplier_account_id' => $account->getKey(),
+                        'upstream_currency' => $upstreamCurrency,
+                        'local_currency' => $localCurrency,
+                        'import_exchange_rate' => $rate,
                     ],
                 ]);
 
@@ -146,7 +157,7 @@ class SupplierCatalogImportService
         }, 3);
     }
 
-    private function prices(SupplierCatalogProduct $catalogProduct): array
+    private function prices(SupplierCatalogProduct $catalogProduct, string $exchangeRate): array
     {
         $metadata = is_array($catalogProduct->metadata) ? $catalogProduct->metadata : [];
         $source = is_array($metadata['prices'] ?? null) ? $metadata['prices'] : [];
@@ -166,8 +177,8 @@ class SupplierCatalogImportService
                 continue;
             }
             $prices[$cycle] = [
-                'price' => $this->normalizeMoney($price['price']),
-                'setup_fee' => $this->normalizeMoney($price['setup_fee'] ?? '0'),
+                'price' => $this->convertMoney($price['price'], $exchangeRate),
+                'setup_fee' => $this->convertMoney($price['setup_fee'] ?? '0', $exchangeRate),
             ];
         }
 
@@ -200,5 +211,25 @@ class SupplierCatalogImportService
         $whole = ltrim($whole, '0');
 
         return ($whole === '' ? '0' : $whole).'.'.str_pad($decimal, 2, '0');
+    }
+
+    private function convertMoney(mixed $value, string $exchangeRate): string
+    {
+        [$amountWhole, $amountDecimal] = array_pad(explode('.', (string) $value, 2), 2, '');
+        [$rateWhole, $rateDecimal] = array_pad(explode('.', $exchangeRate, 2), 2, '');
+        $amountMinor = ((int) $amountWhole * 100) + (int) str_pad($amountDecimal, 2, '0');
+        $rateFraction = (int) str_pad($rateDecimal, 6, '0');
+        $fractionQuotient = intdiv($amountMinor, 1_000_000);
+        $fractionRemainder = $amountMinor % 1_000_000;
+        $convertedMinor = ($amountMinor * (int) $rateWhole)
+            + ($fractionQuotient * $rateFraction)
+            + intdiv(($fractionRemainder * $rateFraction) + 500_000, 1_000_000);
+        if ($convertedMinor > 999_999_999_999_999_999) {
+            throw ValidationException::withMessages([
+                'exchange_rate' => '汇率换算后的商品价格超过系统支持范围。',
+            ]);
+        }
+
+        return intdiv($convertedMinor, 100).'.'.str_pad((string) ($convertedMinor % 100), 2, '0', STR_PAD_LEFT);
     }
 }

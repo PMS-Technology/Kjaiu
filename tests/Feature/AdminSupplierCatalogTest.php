@@ -243,6 +243,7 @@ class AdminSupplierCatalogTest extends TestCase
             [
                 'product_group_id' => $group->id,
                 'catalog_products' => [$catalog->id],
+                'exchange_rate' => '1',
                 'current_password' => 'admin-password',
             ],
         )->assertRedirect('/admin/suppliers/'.$supplier->id.'/catalog')
@@ -271,7 +272,7 @@ class AdminSupplierCatalogTest extends TestCase
         $this->assertStringNotContainsString('admin-password', $audit->toJson());
     }
 
-    public function test_catalog_import_rejects_duplicates_cross_account_products_and_currency_mismatches_atomically(): void
+    public function test_catalog_import_rejects_duplicates_and_cross_account_products_and_converts_foreign_currency(): void
     {
         $administrator = $this->administrator();
         $supplier = $this->supplier();
@@ -303,6 +304,7 @@ class AdminSupplierCatalogTest extends TestCase
         $payload = fn (array $products): array => [
             'product_group_id' => $group->id,
             'catalog_products' => $products,
+            'exchange_rate' => '7.20',
             'current_password' => 'admin-password',
         ];
         $this->actingAs($administrator)->post(
@@ -311,11 +313,13 @@ class AdminSupplierCatalogTest extends TestCase
         )->assertSessionHasErrors('catalog_products');
         $this->assertDatabaseCount('products', 0);
 
-        $this->post(
-            '/admin/suppliers/'.$supplier->id.'/catalog-import',
-            $payload([$valid->id, $usd->id]),
-        )->assertSessionHasErrors('catalog_products');
-        $this->assertDatabaseCount('products', 0);
+        $this->post('/admin/suppliers/'.$supplier->id.'/catalog-import', $payload([$usd->id]))
+            ->assertSessionHas('success');
+        $converted = Product::query()->where('name', 'USD product')->sole();
+        $this->assertSame('216.00', $converted->price);
+        $this->assertSame('USD', $converted->metadata['upstream_currency']);
+        $this->assertSame('CNY', $converted->metadata['local_currency']);
+        $this->assertSame('7.20', $converted->metadata['import_exchange_rate']);
 
         $this->post(
             '/admin/suppliers/'.$supplier->id.'/catalog-import',
@@ -325,8 +329,8 @@ class AdminSupplierCatalogTest extends TestCase
             '/admin/suppliers/'.$supplier->id.'/catalog-import',
             $payload([$valid->id]),
         )->assertSessionHasErrors('catalog_products');
-        $this->assertDatabaseCount('products', 1);
-        $this->assertDatabaseCount('supplier_catalog_imports', 1);
+        $this->assertDatabaseCount('products', 2);
+        $this->assertDatabaseCount('supplier_catalog_imports', 2);
     }
 
     public function test_detail_failure_preserves_the_complete_previous_catalog_and_mappings(): void

@@ -107,7 +107,7 @@
                 @forelse ($recentAudits as $audit)
                     <div class="audit-row">
                         <span class="audit-dot"></span>
-                        <div><strong>{{ str_replace(['.', '_'], ' / ', $audit->action) }}</strong><p>{{ $audit->actor?->name ?? '系统任务' }} · {{ $audit->created_at->diffForHumans() }}</p></div>
+                        <div><strong>{{ $audit->action_label }}</strong><p>{{ $audit->actor?->name ?? '系统任务' }} · {{ $audit->subject_label }} · {{ $audit->created_at->diffForHumans() }}</p></div>
                     </div>
                 @empty
                     <div class="empty-state compact"><p>暂无审计记录</p></div>

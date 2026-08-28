@@ -1,0 +1,6 @@
+@php($configuration = $gateway?->configuration ?? [])
+<header class="modal-head"><div><p class="panel-kicker">PAYMENT METHOD</p><h2>{{ $gateway ? '编辑收款方式' : '添加收款方式' }}</h2></div><button type="button" data-dialog-close>×</button></header><div class="modal-body form-grid">
+<label class="field"><span>内部标识</span><input name="name" value="{{ $gateway?->name }}" required maxlength="64" placeholder="BankTransfer" @readonly($gateway)></label><label class="field"><span>显示名称</span><input name="title" value="{{ $gateway?->title }}" required></label>
+<label class="field field-full"><span>收款账号</span><textarea name="account" rows="2">{{ $configuration['account'] ?? '' }}</textarea></label><label class="field field-full"><span>付款说明</span><textarea name="instructions" rows="4">{{ $configuration['instructions'] ?? '' }}</textarea></label>
+<label class="field"><span>排序</span><input type="number" name="sort_order" value="{{ $gateway?->sort_order ?? 0 }}" required></label><div class="toggle-stack"><input type="hidden" name="is_active" value="0"><label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked($gateway?->is_active ?? true)><span></span><b>启用</b></label></div>
+</div><footer class="modal-foot"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary">保存</button></footer>

@@ -47,7 +47,8 @@
                         <td data-label="操作" class="align-right">
                             <div class="row-actions">
                                 <a class="row-action" href="{{ route('admin.products.index', ['edit' => $product->id, 'q' => $keyword]) }}">编辑</a>
-                                <form method="POST" action="{{ route('admin.products.toggle', $product) }}">@csrf @method('PATCH')<button class="row-action" type="submit">{{ $product->is_active ? '下架' : '上架' }}</button></form>
+                                 <form method="POST" action="{{ route('admin.products.toggle', $product) }}">@csrf @method('PATCH')<button class="row-action" type="submit">{{ $product->is_active ? '下架' : '上架' }}</button></form>
+                                <form method="POST" action="{{ route('admin.products.destroy', $product) }}" data-confirm="确认永久删除该商品？已有订单或上游执行记录的商品会被系统拒绝删除。">@csrf @method('DELETE')<button class="row-action danger-text" type="submit">删除</button></form>
                             </div>
                         </td>
                     </tr>

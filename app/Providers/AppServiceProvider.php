@@ -5,8 +5,10 @@ namespace App\Providers;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
+use Throwable;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -23,6 +25,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->loadRuntimeSettings();
         RateLimiter::for('supplier-sensitive', function (Request $request): array {
             $administrator = $request->user()?->getAuthIdentifier();
             $key = ($administrator === null ? 'guest' : 'admin:'.$administrator)
@@ -59,6 +62,37 @@ class AppServiceProvider extends ServiceProvider
 
         if (! $safe) {
             throw new RuntimeException('Refusing to run tests against a database that is not explicitly disposable.');
+        }
+    }
+
+    private function loadRuntimeSettings(): void
+    {
+        try {
+            if (! Schema::hasTable('system_settings') || ! ($settings = \App\Models\SystemSetting::query()->find(1))) {
+                return;
+            }
+            config([
+                'app.name' => $settings->site_name,
+                'app.url' => $settings->site_url ?: config('app.url'),
+                'kjaiu.company_name' => $settings->site_name,
+                'kjaiu.site.logo_url' => $settings->logo_url,
+                'kjaiu.site.favicon_url' => $settings->favicon_url,
+            ]);
+            $mail = $settings->mail_configuration;
+            if (is_array($mail) && filled($mail['host'] ?? null)) {
+                config([
+                    'mail.default' => 'smtp',
+                    'mail.mailers.smtp.host' => $mail['host'],
+                    'mail.mailers.smtp.port' => $mail['port'],
+                    'mail.mailers.smtp.scheme' => $mail['scheme'],
+                    'mail.mailers.smtp.username' => $mail['username'],
+                    'mail.mailers.smtp.password' => $mail['password'],
+                    'mail.from.address' => $mail['from_address'],
+                    'mail.from.name' => $mail['from_name'],
+                ]);
+            }
+        } catch (Throwable) {
+            // Installation and migration commands must work before the settings table exists.
         }
     }
 }

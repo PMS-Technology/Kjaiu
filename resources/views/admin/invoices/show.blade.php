@@ -87,6 +87,7 @@
             </article>
 
             @if($invoice->status === 'Unpaid')
+                <article class="panel"><header class="panel-head"><div><p class="panel-kicker">STATUS</p><h2>修改账单状态</h2></div></header><form method="POST" action="{{ route('admin.invoices.status', $invoice) }}" data-confirm="确认修改账单状态？已支付会触发真实入账与服务开通，已取消会释放预占库存。">@csrf @method('PATCH')<div class="modal-body form-grid"><label class="field"><span>目标状态</span><select name="status" required><option value="Paid">已支付</option><option value="Cancelled">已取消</option></select></label><label class="field"><span>收款方式 <small>取消时忽略</small></span><select name="gateway"><option value="">请选择</option>@foreach($gateways as $gateway)<option value="{{ $gateway->name }}">{{ $gateway->title }}</option>@endforeach<option value="Cash">现金</option></select></label><label class="field field-full"><span>外部流水号</span><input name="transaction_number" maxlength="191"></label></div><footer class="modal-foot"><button class="button button-primary">修改状态</button></footer></form></article>
                 <form class="danger-zone" method="POST" action="{{ route('admin.invoices.cancel', $invoice) }}" data-confirm="确认取消这张账单？订单预占库存将被释放，且该账单不能继续付款。">
                     @csrf
                     <input type="hidden" name="_form" value="cancel">

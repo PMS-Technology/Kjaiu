@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Web\AuthController;
+use App\Http\Controllers\Web\AuditLogController;
 use App\Http\Controllers\Web\CustomerController;
 use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\FinanceController;
@@ -14,6 +15,7 @@ use App\Http\Controllers\Web\Portal\ProfileController as PortalProfileController
 use App\Http\Controllers\Web\Portal\ServiceController as PortalServiceController;
 use App\Http\Controllers\Web\ProductController;
 use App\Http\Controllers\Web\ServiceController;
+use App\Http\Controllers\Web\SettingController;
 use App\Http\Controllers\Web\SupplierController;
 use App\Http\Controllers\Web\SupplierOperationController;
 use Illuminate\Support\Facades\Route;
@@ -63,10 +65,12 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'active', 'admin'])-
     Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
     Route::post('/customers', [CustomerController::class, 'store'])->name('customers.store');
     Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
+    Route::patch('/customers/{customer}/balance', [CustomerController::class, 'updateBalance'])->name('customers.balance');
 
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
     Route::post('/products', [ProductController::class, 'store'])->name('products.store');
     Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
+    Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
     Route::patch('/products/{product}/toggle', [ProductController::class, 'toggle'])->name('products.toggle');
     Route::post('/product-groups', [ProductController::class, 'storeGroup'])->name('product-groups.store');
 
@@ -75,6 +79,7 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'active', 'admin'])-
     Route::get('/invoices/{invoice}', [InvoiceController::class, 'show'])->name('invoices.show');
     Route::post('/invoices/{invoice}/pay', [InvoiceController::class, 'pay'])->name('invoices.pay');
     Route::post('/invoices/{invoice}/cancel', [InvoiceController::class, 'cancel'])->name('invoices.cancel');
+    Route::patch('/invoices/{invoice}/status', [InvoiceController::class, 'updateStatus'])->name('invoices.status');
 
     Route::get('/services', [ServiceController::class, 'index'])->name('services.index');
     Route::put('/services/{service}', [ServiceController::class, 'update'])->name('services.update');
@@ -96,4 +101,12 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'active', 'admin'])-
 
     Route::get('/finance', [FinanceController::class, 'index'])->name('finance.index');
     Route::post('/finance/adjust', [FinanceController::class, 'adjust'])->name('finance.adjust');
+
+    Route::get('/audit-logs', AuditLogController::class)->name('audit-logs.index');
+    Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
+    Route::put('/settings/site', [SettingController::class, 'updateSite'])->name('settings.site');
+    Route::put('/settings/mail', [SettingController::class, 'updateMail'])->name('settings.mail');
+    Route::post('/settings/mail/test', [SettingController::class, 'testMail'])->middleware('throttle:3,1')->name('settings.mail.test');
+    Route::post('/settings/payment-gateways', [SettingController::class, 'storeGateway'])->name('settings.gateways.store');
+    Route::put('/settings/payment-gateways/{paymentGateway}', [SettingController::class, 'updateGateway'])->name('settings.gateways.update');
 });

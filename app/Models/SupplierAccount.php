@@ -141,4 +141,11 @@ class SupplierAccount extends Model
 
         return ($options['allow_legacy_unbounded_credit_payment'] ?? null) === true;
     }
+
+    public function verifiesTls(): bool
+    {
+        $options = is_array($this->options) ? $this->options : [];
+
+        return ($options['verify_tls'] ?? true) !== false;
+    }
 }

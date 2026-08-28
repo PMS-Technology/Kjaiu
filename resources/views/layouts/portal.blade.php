@@ -4,15 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', '客户门户') · Kjaiu</title>
+    <title>@yield('title', '客户门户') · {{ config('app.name', 'Kjaiu') }}</title>
+    @if(config('kjaiu.site.favicon_url'))<link rel="icon" href="{{ config('kjaiu.site.favicon_url') }}">@endif
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="portal-shell">
     <header class="portal-header">
         <div class="portal-header-inner">
-            <a class="brand portal-brand" href="{{ route('portal.dashboard') }}" aria-label="Kjaiu 客户门户">
-                <span class="brand-mark">K<span></span></span>
-                <span class="brand-copy"><strong>Kjaiu</strong><small>CLIENT PORTAL</small></span>
+            <a class="brand portal-brand" href="{{ route('portal.dashboard') }}" aria-label="{{ config('app.name') }} 客户门户">
+                @if(config('kjaiu.site.logo_url'))<img class="site-logo" src="{{ config('kjaiu.site.logo_url') }}" alt="">@else<span class="brand-mark">K<span></span></span>@endif
+                <span class="brand-copy"><strong>{{ config('app.name', 'Kjaiu') }}</strong><small>CLIENT PORTAL</small></span>
             </a>
 
             <div class="portal-account">

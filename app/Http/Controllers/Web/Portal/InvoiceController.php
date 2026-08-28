@@ -56,7 +56,7 @@ class InvoiceController extends Controller
                     ->where('is_active', true)
                     ->whereRaw('LOWER(name) != ?', ['credit'])
                     ->orderBy('sort_order')
-                    ->get(['id', 'name', 'title', 'icon'])
+                    ->get()
                 : collect(),
         ]);
     }

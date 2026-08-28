@@ -25,7 +25,7 @@
     <section class="panel resource-panel">
         <header class="panel-head">
             <div><p class="panel-kicker">SUPPLIER ACCOUNTS</p><h2>账户与连接状态</h2></div>
-            <span class="panel-meta">仅支持 IDCSMART FINANCE · 强制 TLS 校验</span>
+            <span class="panel-meta">仅支持 IDCSMART FINANCE · TLS 校验可按账户配置</span>
         </header>
         <div class="service-grid">
             @forelse($accounts as $account)
@@ -43,9 +43,9 @@
                         <span class="status {{ $account->is_active ? 'status-active' : 'status-suspended' }}">{{ $account->is_active ? '已启用' : '已停用' }}</span>
                     </header>
                     <div class="service-facts">
-                        <div><span>登录标识</span><strong>{{ $state['identifier'] }}</strong><small class="cell-sub">{{ $state['password_configured'] ? '密码已加密保存' : '密码未配置' }}</small></div>
+                        <div><span>登录标识</span><strong data-sensitive-value data-masked="{{ $state['identifier'] }}" data-visible="{{ $state['identifier_visible'] }}">{{ $state['identifier'] }}</strong> <button class="sensitive-toggle" type="button" data-sensitive-toggle aria-label="显示登录标识">查看</button><small class="cell-sub">{{ $state['password_configured'] ? '密码已加密保存' : '密码未配置' }}</small></div>
                         <div><span>上游目录</span><strong>{{ $account->active_catalog_product_count }} / {{ $account->catalog_product_count }}</strong></div>
-                        <div><span>周期映射</span><strong>{{ $account->active_mapping_count }}</strong></div>
+                        <div><span>TLS 校验</span><strong>{{ $state['verify_tls'] ? '已开启' : '已关闭' }}</strong><small class="cell-sub">{{ $state['verify_tls'] ? '验证证书与主机名' : '高风险：连接不验证证书' }}</small></div>
                         <div><span>最近同步</span><strong>{{ $account->last_catalog_synced_at?->format('m-d H:i') ?? '尚未同步' }}</strong></div>
                     </div>
                     <footer>
@@ -77,10 +77,11 @@
                                 <label class="field"><span>内部代码</span><input name="code" value="{{ old('_form') === 'supplier-'.$account->id ? old('code') : $state['code'] }}" maxlength="64" required></label>
                                 <label class="field field-full"><span>Finance 基础地址 <small>仅 HTTPS，不含凭据或查询参数</small></span><input type="url" name="base_url" value="{{ old('_form') === 'supplier-'.$account->id ? old('base_url') : $state['base_url'] }}" maxlength="2048" required placeholder="https://finance.example.com"></label>
                                 <label class="field"><span>登录标识 <small>留空保留 {{ $state['identifier'] }}</small></span><input name="username" value="" maxlength="191" autocomplete="off"></label>
-                                <label class="field"><span>上游密码 <small>留空保留已保存密码</small></span><input type="password" name="password" value="" maxlength="4096" autocomplete="new-password"></label>
+                                <label class="field"><span>上游密码 <small>留空保留已保存密码</small></span><div class="password-field"><input type="password" name="password" value="" maxlength="4096" autocomplete="new-password"><button type="button" data-password-toggle>查看</button></div></label>
                                 <div class="toggle-stack field-full">
-                                    <input type="hidden" name="is_active" value="0">
-                                    <label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked(old('_form') === 'supplier-'.$account->id ? old('is_active') : $account->is_active)><span></span><b>启用该供应商账户</b></label>
+                                     <input type="hidden" name="is_active" value="0">
+                                     <label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked(old('_form') === 'supplier-'.$account->id ? old('is_active') : $account->is_active)><span></span><b>启用该供应商账户</b></label>
+                                    <input type="hidden" name="verify_tls" value="0"><label class="switch-field"><input type="checkbox" name="verify_tls" value="1" @checked(old('_form') === 'supplier-'.$account->id ? old('verify_tls') : $state['verify_tls'])><span></span><b>校验上游 TLS 证书（强烈建议启用）</b></label>
                                     <input type="hidden" name="allow_legacy_unbounded_credit_payment" value="0">
                                     <label class="switch-field"><input type="checkbox" name="allow_legacy_unbounded_credit_payment" value="1" @checked(old('_form') === 'supplier-'.$account->id ? old('allow_legacy_unbounded_credit_payment') : $state['allow_legacy_unbounded_credit_payment'])><span></span><b>高风险兼容：允许旧版接口自动扣上游余额</b></label>
                                     <small class="field-hint">危险：旧版 `/apply_credit` 不支持预期金额、币种、账单版本或幂等前置条件，冻结报价无法原子限制实际扣款。存在未终结操作或待结算路由时禁止更改。</small>
@@ -202,12 +203,13 @@
                 <div class="form-grid">
                     <label class="field"><span>账户名称</span><input name="name" value="{{ old('_form') === 'supplier-create' ? old('name') : '' }}" maxlength="191" required placeholder="主供应商"></label>
                     <label class="field"><span>内部代码</span><input name="code" value="{{ old('_form') === 'supplier-create' ? old('code') : '' }}" maxlength="64" required placeholder="primary-finance"></label>
-                    <label class="field field-full"><span>Finance 基础地址 <small>强制 HTTPS 和证书校验</small></span><input type="url" name="base_url" value="{{ old('_form') === 'supplier-create' ? old('base_url') : '' }}" maxlength="2048" required placeholder="https://finance.example.com"></label>
+                    <label class="field field-full"><span>Finance 基础地址 <small>强制 HTTPS</small></span><input type="url" name="base_url" value="{{ old('_form') === 'supplier-create' ? old('base_url') : '' }}" maxlength="2048" required placeholder="https://finance.example.com"></label>
                     <label class="field"><span>登录标识</span><input name="username" value="" maxlength="191" required autocomplete="off"></label>
-                    <label class="field"><span>上游密码</span><input type="password" name="password" value="" maxlength="4096" required autocomplete="new-password"></label>
+                    <label class="field"><span>上游密码</span><div class="password-field"><input type="password" name="password" value="" maxlength="4096" required autocomplete="new-password"><button type="button" data-password-toggle>查看</button></div></label>
                     <div class="toggle-stack field-full">
                         <input type="hidden" name="is_active" value="0">
-                        <label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked(old('_form') === 'supplier-create' ? old('is_active') : true)><span></span><b>创建后立即启用</b></label>
+                         <label class="switch-field"><input type="checkbox" name="is_active" value="1" @checked(old('_form') === 'supplier-create' ? old('is_active') : true)><span></span><b>创建后立即启用</b></label>
+                        <input type="hidden" name="verify_tls" value="0"><label class="switch-field"><input type="checkbox" name="verify_tls" value="1" @checked(old('_form') === 'supplier-create' ? old('verify_tls') : true)><span></span><b>校验上游 TLS 证书（强烈建议启用）</b></label>
                         <input type="hidden" name="allow_legacy_unbounded_credit_payment" value="0">
                         <label class="switch-field"><input type="checkbox" name="allow_legacy_unbounded_credit_payment" value="1" @checked(old('_form') === 'supplier-create' && old('allow_legacy_unbounded_credit_payment'))><span></span><b>高风险兼容：允许旧版接口自动扣上游余额</b></label>
                         <small class="field-hint">默认关闭。旧版接口无法携带金额、币种、账单版本或幂等约束，启用后存在无法原子限制供应商扣款的风险。</small>

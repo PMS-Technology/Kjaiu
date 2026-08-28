@@ -29,10 +29,14 @@
     </section>
 
     @if ($invoice->status === 'Unpaid' && $invoice->payment_method && strcasecmp($invoice->payment_method, 'Credit') !== 0)
+        @php($selectedGateway = $gateways->firstWhere('name', $invoice->payment_method))
         <div class="notice notice-pending" role="status">
             <span class="notice-icon">i</span>
             <span>账单 {{ $invoice->number }} 尚未完成付款。请联系 {{ config('kjaiu.company_email') }} 并提供账单号获取 {{ $invoice->payment_method }} 付款指引；到账确认前状态保持待支付。</span>
         </div>
+        @if($selectedGateway && (filled(data_get($selectedGateway->configuration, 'account')) || filled(data_get($selectedGateway->configuration, 'instructions'))))
+            <section class="panel"><header class="panel-head"><div><p class="panel-kicker">PAYMENT INSTRUCTIONS</p><h2>{{ $selectedGateway->title }} 收款信息</h2></div></header><div class="modal-body">@if(filled(data_get($selectedGateway->configuration, 'account')))<p><strong>收款账号</strong></p><p style="white-space: pre-wrap">{{ data_get($selectedGateway->configuration, 'account') }}</p>@endif @if(filled(data_get($selectedGateway->configuration, 'instructions')))<p><strong>付款说明</strong></p><p style="white-space: pre-wrap">{{ data_get($selectedGateway->configuration, 'instructions') }}</p>@endif</div></section>
+        @endif
     @endif
 
     <section class="dashboard-grid invoice-detail-grid">

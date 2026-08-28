@@ -4,15 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', '工作台') · Kjaiu</title>
+    <title>@yield('title', '工作台') · {{ config('app.name', 'Kjaiu') }}</title>
+    @if(config('kjaiu.site.favicon_url'))<link rel="icon" href="{{ config('kjaiu.site.favicon_url') }}">@endif
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="admin-shell">
     <input class="nav-toggle" type="checkbox" id="nav-toggle" aria-label="切换导航">
     <aside class="sidebar">
-        <a class="brand" href="{{ route('admin.dashboard') }}" aria-label="Kjaiu 首页">
-            <span class="brand-mark">K<span></span></span>
-            <span class="brand-copy"><strong>Kjaiu</strong><small>FINANCE OS</small></span>
+        <a class="brand" href="{{ route('admin.dashboard') }}" aria-label="{{ config('app.name') }} 首页">
+            @if(config('kjaiu.site.logo_url'))<img class="site-logo" src="{{ config('kjaiu.site.logo_url') }}" alt="">@else<span class="brand-mark">K<span></span></span>@endif
+            <span class="brand-copy"><strong>{{ config('app.name', 'Kjaiu') }}</strong><small>FINANCE OS</small></span>
         </a>
 
         <nav class="primary-nav" aria-label="主导航">
@@ -52,6 +53,10 @@
                 <span>资金流水</span>
             </a>
 
+            <p class="nav-label nav-label-spaced">系统</p>
+            <a href="{{ route('admin.audit-logs.index') }}" class="{{ request()->routeIs('admin.audit-logs.*') ? 'is-active' : '' }}"><svg viewBox="0 0 24 24"><path d="M4 3h16v18H4V3Zm3 4v2h10V7H7Zm0 4v2h10v-2H7Zm0 4v2h7v-2H7Z"/></svg><span>操作记录</span></a>
+            <a href="{{ route('admin.settings.index') }}" class="{{ request()->routeIs('admin.settings.*') ? 'is-active' : '' }}"><svg viewBox="0 0 24 24"><path d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15.3 6L15 3.5h-4L10.7 6A7 7 0 0 0 9 7.1l-2.4-1-2 3.4 2 1.5a7.7 7.7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1.1l.3 2.5h4l.3-2.5a7 7 0 0 0 1.7-1.1l2.4 1 2-3.4-2-1.5ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg><span>系统设置</span></a>
+
             <p class="nav-label nav-label-spaced">账户</p>
             <a href="{{ route('portal.dashboard') }}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4 2 12l8 8v-5h8v-6h-8V4Zm10 2h2v12h-2V6Z"/></svg>
@@ -77,7 +82,7 @@
 
     <main class="main-stage">
         <header class="mobile-bar">
-            <a class="brand brand-mobile" href="{{ route('admin.dashboard') }}"><span class="brand-mark">K<span></span></span><strong>Kjaiu</strong></a>
+            <a class="brand brand-mobile" href="{{ route('admin.dashboard') }}"><span class="brand-mark">K<span></span></span><strong>{{ config('app.name', 'Kjaiu') }}</strong></a>
             <label class="menu-button" for="nav-toggle"><span></span><span></span><span></span></label>
         </header>
 

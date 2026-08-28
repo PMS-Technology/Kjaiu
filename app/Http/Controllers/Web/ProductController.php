@@ -126,6 +126,25 @@ class ProductController extends Controller
         return back()->with('success', $product->is_active ? '商品已上架' : '商品已下架');
     }
 
+    public function destroy(Request $request, Product $product): RedirectResponse
+    {
+        DB::transaction(function () use ($product, $request): void {
+            $locked = Product::query()->lockForUpdate()->findOrFail($product->id);
+            if ($locked->supplierOrderItemRoutes()->exists()
+                || OrderItem::query()->where('product_id', $locked->id)->exists()) {
+                throw ValidationException::withMessages([
+                    'product' => '该商品已有订单或上游执行记录，只能下架，不能删除。',
+                ]);
+            }
+            $locked->supplierMappings()->delete();
+            $locked->supplierCatalogImport()->delete();
+            $locked->delete();
+            AuditLog::record($request, 'product.deleted', $locked, $locked->only(['name', 'price', 'billing_cycle']), null);
+        }, 3);
+
+        return redirect()->route('admin.products.index')->with('success', '商品已删除');
+    }
+
     public function storeGroup(Request $request): RedirectResponse
     {
         $data = $request->validate([

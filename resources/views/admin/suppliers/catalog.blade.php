@@ -35,6 +35,7 @@
             <input type="hidden" name="_form" value="supplier-catalog-import-{{ $supplier->id }}">
             <div class="catalog-import-toolbar">
                 <label class="field"><span>导入到本地分组</span><select name="product_group_id" required><option value="">请选择子分组</option>@foreach($groups as $group)<option value="{{ $group->id }}" @selected((string) old('product_group_id') === (string) $group->id)>{{ $group->parent?->name }} / {{ $group->name }}</option>@endforeach</select></label>
+                <label class="field"><span>外币兑本地币汇率 <small>同币种自动按 1</small></span><input type="number" name="exchange_rate" value="{{ old('exchange_rate', '1') }}" min="0.000001" step="0.000001" required><small class="field-hint">例如 1 USD = 7.20 {{ $localCurrency }}，填写 7.20。一次请选择同一种外币。</small></label>
                 <button class="button button-primary" type="submit">导入所选商品</button>
             </div>
 
@@ -46,7 +47,7 @@
                         @php
                             $imported = $catalogProduct->catalogImport;
                             $currencyMatches = strtoupper((string) $catalogProduct->currency) === $localCurrency;
-                            $selectable = $catalogProduct->is_active && !$imported && $currencyMatches && !empty(data_get($catalogProduct->metadata, 'prices'));
+                            $selectable = $catalogProduct->is_active && !$imported && !empty(data_get($catalogProduct->metadata, 'prices'));
                         @endphp
                         <tr>
                             <td data-label="选择"><input type="checkbox" name="catalog_products[]" value="{{ $catalogProduct->id }}" data-select-item="catalog-product" @checked(in_array((string) $catalogProduct->id, old('catalog_products', []), true)) @disabled(!$selectable) aria-label="选择 {{ $catalogProduct->name }}"></td>
@@ -65,7 +66,7 @@
                                 @elseif(!$catalogProduct->is_active)
                                     <span class="status status-suspended">上游已停用</span>
                                 @elseif(!$currencyMatches)
-                                    <span class="status status-suspended">币种不匹配</span>
+                                    <span class="status status-pending">需按汇率换算</span>
                                 @elseif(!$selectable)
                                     <span class="status status-suspended">价格不可用</span>
                                 @else

@@ -156,6 +156,26 @@ document.addEventListener("click", async (event) => {
         });
         builder.insertBefore(fragment, template);
         builder.dataset.nextIndex = String(index + 1);
+        return;
+    }
+
+    const passwordToggle = event.target.closest("[data-password-toggle]");
+    if (passwordToggle) {
+        const input = passwordToggle.closest(".password-field")?.querySelector("input");
+        if (!input) return;
+        input.type = input.type === "password" ? "text" : "password";
+        passwordToggle.textContent = input.type === "password" ? "查看" : "隐藏";
+        return;
+    }
+
+    const sensitiveToggle = event.target.closest("[data-sensitive-toggle]");
+    if (sensitiveToggle) {
+        const value = sensitiveToggle.parentElement?.querySelector("[data-sensitive-value]");
+        if (!value) return;
+        const visible = sensitiveToggle.dataset.visible === "true";
+        value.textContent = visible ? value.dataset.masked : value.dataset.visible;
+        sensitiveToggle.dataset.visible = visible ? "false" : "true";
+        sensitiveToggle.textContent = visible ? "查看" : "隐藏";
     }
 });
 

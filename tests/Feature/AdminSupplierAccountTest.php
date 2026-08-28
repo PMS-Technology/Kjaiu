@@ -138,7 +138,7 @@ class AdminSupplierAccountTest extends TestCase
         Http::assertSentCount(0);
     }
 
-    public function test_only_idcsmart_finance_with_tls_verification_can_be_managed(): void
+    public function test_only_idcsmart_finance_can_be_managed_and_tls_verification_is_optional(): void
     {
         $administrator = $this->administrator();
 
@@ -148,9 +148,10 @@ class AdminSupplierAccountTest extends TestCase
             ]))
             ->assertSessionHasErrors('driver');
         $this->post('/admin/suppliers', $this->accountPayload([
+            'code' => 'tls-disabled',
             'verify_tls' => '0',
-        ]))->assertSessionHasErrors('verify_tls');
-        $this->assertDatabaseCount('supplier_accounts', 0);
+        ]))->assertSessionHasNoErrors();
+        $this->assertFalse(SupplierAccount::query()->where('code', 'tls-disabled')->sole()->verifiesTls());
 
         $unsupported = $this->supplier(['driver' => 'unsupported_driver']);
         $this->get('/admin/suppliers')->assertDontSee($unsupported->name);
@@ -199,7 +200,7 @@ class AdminSupplierAccountTest extends TestCase
 
         $this->get('/admin/suppliers')
             ->assertOk()
-            ->assertDontSee($username)
+            ->assertSee($username)
             ->assertDontSee($password)
             ->assertSee('已加密保存');
     }

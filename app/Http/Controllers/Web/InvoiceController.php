@@ -179,4 +179,26 @@ class InvoiceController extends Controller
 
         return back()->with('success', $changed ? '账单已取消，预占库存已释放' : '该账单已取消');
     }
+
+    public function updateStatus(Request $request, Invoice $invoice, BillingService $billing): RedirectResponse
+    {
+        $data = $request->validate([
+            'status' => ['required', Rule::in(['Paid', 'Cancelled'])],
+            'gateway' => ['nullable', 'string', 'max:64'],
+            'transaction_number' => ['nullable', 'string', 'max:191'],
+        ]);
+        if ($invoice->status !== 'Unpaid') {
+            throw ValidationException::withMessages(['status' => '只有待支付账单可以修改状态。']);
+        }
+
+        if ($data['status'] === 'Cancelled') {
+            return $this->cancel($request, $invoice, $billing);
+        }
+        if (blank($data['gateway'] ?? null)) {
+            throw ValidationException::withMessages(['gateway' => '标记为已支付时必须选择收款方式。']);
+        }
+        $request->merge(['gateway' => $data['gateway']]);
+
+        return $this->pay($request, $invoice, $billing);
+    }
 }
