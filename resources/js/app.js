@@ -173,9 +173,27 @@ document.addEventListener("click", async (event) => {
         const value = sensitiveToggle.parentElement?.querySelector("[data-sensitive-value]");
         if (!value) return;
         const visible = sensitiveToggle.dataset.visible === "true";
-        value.textContent = visible ? value.dataset.masked : value.dataset.visible;
-        sensitiveToggle.dataset.visible = visible ? "false" : "true";
-        sensitiveToggle.textContent = visible ? "查看" : "隐藏";
+        if (visible) {
+            value.textContent = value.dataset.masked;
+            delete value.dataset.visible;
+            sensitiveToggle.dataset.visible = "false";
+            sensitiveToggle.textContent = "查看";
+            return;
+        }
+
+        sensitiveToggle.disabled = true;
+        try {
+            const response = await window.axios.post(sensitiveToggle.dataset.revealUrl);
+            value.textContent = response.data.identifier;
+            value.dataset.visible = response.data.identifier;
+            sensitiveToggle.dataset.visible = "true";
+            sensitiveToggle.textContent = "隐藏";
+        } catch (error) {
+            const message = error.response?.data?.message || "登录标识读取失败";
+            window.alert(message);
+        } finally {
+            sensitiveToggle.disabled = false;
+        }
     }
 });
 

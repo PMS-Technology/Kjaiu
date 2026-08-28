@@ -43,7 +43,7 @@
                         <span class="status {{ $account->is_active ? 'status-active' : 'status-suspended' }}">{{ $account->is_active ? '已启用' : '已停用' }}</span>
                     </header>
                     <div class="service-facts">
-                        <div><span>登录标识</span><strong data-sensitive-value data-masked="{{ $state['identifier'] }}" data-visible="{{ $state['identifier_visible'] }}">{{ $state['identifier'] }}</strong> <button class="sensitive-toggle" type="button" data-sensitive-toggle aria-label="显示登录标识">查看</button><small class="cell-sub">{{ $state['password_configured'] ? '密码已加密保存' : '密码未配置' }}</small></div>
+                        <div><span>登录标识</span><strong data-sensitive-value data-masked="{{ $state['identifier'] }}">{{ $state['identifier'] }}</strong> <button class="sensitive-toggle" type="button" data-sensitive-toggle data-reveal-url="{{ route('admin.suppliers.reveal-identifier', $account) }}" aria-label="显示登录标识">查看</button><small class="cell-sub">{{ $state['password_configured'] ? '密码已加密保存' : '密码未配置' }}</small></div>
                         <div><span>上游目录</span><strong>{{ $account->active_catalog_product_count }} / {{ $account->catalog_product_count }}</strong></div>
                         <div><span>TLS 校验</span><strong>{{ $state['verify_tls'] ? '已开启' : '已关闭' }}</strong><small class="cell-sub">{{ $state['verify_tls'] ? '验证证书与主机名' : '高风险：连接不验证证书' }}</small></div>
                         <div><span>最近同步</span><strong>{{ $account->last_catalog_synced_at?->format('m-d H:i') ?? '尚未同步' }}</strong></div>

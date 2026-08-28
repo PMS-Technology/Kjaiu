@@ -12,6 +12,7 @@ class AuditLog extends Model
         'product_group.created' => '创建商品分组', 'customer.created' => '创建用户', 'customer.updated' => '修改用户资料',
         'credit.adjusted' => '修改用户余额', 'invoice.created' => '创建账单', 'invoice.paid' => '确认账单收款', 'invoice.cancelled' => '取消账单',
         'supplier.created' => '创建上游供应商', 'supplier.updated' => '修改上游供应商', 'supplier.catalog_products_imported' => '导入上游商品',
+        'supplier.identifier_revealed' => '查看供应商登录标识',
         'settings.site_updated' => '修改站点设置', 'settings.mail_updated' => '修改邮件配置', 'settings.mail_tested' => '发送测试邮件',
         'payment_gateway.created' => '添加收款方式', 'payment_gateway.updated' => '修改收款方式',
     ];

@@ -20,6 +20,7 @@ use DomainException;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
@@ -139,7 +140,6 @@ class SupplierController extends Controller
                 'base_url' => $this->safeBaseUrl($account->base_url, $credentials),
                 'code' => $this->safeDisplayValue($account->code, $credentials, '代码已安全隐藏'),
                 'identifier' => $this->maskIdentifier($credentials['username'] ?? null),
-                'identifier_visible' => $this->safeDisplayValue($credentials['username'] ?? null, [$credentials['password'] ?? ''], '未配置'),
                 'name' => $this->safeDisplayValue($account->name, $credentials, '名称已安全隐藏'),
                 'password_configured' => filled($credentials['password'] ?? null),
                 'allow_legacy_unbounded_credit_payment' => $account
@@ -558,6 +558,29 @@ class SupplierController extends Controller
 
         return redirect()->route('admin.suppliers.index')
             ->with('success', '上游供应商配置已更新');
+    }
+
+    public function revealIdentifier(Request $request, SupplierAccount $supplier): JsonResponse
+    {
+        $this->requireSupportedAccount($supplier);
+        $credentials = $this->savedCredentials($supplier);
+        $identifier = $credentials['username'] ?? null;
+        if (! is_string($identifier) || trim($identifier) === '') {
+            throw ValidationException::withMessages([
+                'identifier' => '该供应商未配置登录标识。',
+            ]);
+        }
+
+        $this->recordAudit(
+            $request,
+            'supplier.identifier_revealed',
+            $supplier,
+            null,
+            ['identifier_revealed' => true],
+            array_values($credentials),
+        );
+
+        return response()->json(['identifier' => $identifier]);
     }
 
     public function testActive(Request $request): RedirectResponse

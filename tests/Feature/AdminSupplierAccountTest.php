@@ -35,6 +35,7 @@ class AdminSupplierAccountTest extends TestCase
         $this->get('/admin/suppliers')->assertRedirect('/login');
         $this->post('/admin/suppliers')->assertRedirect('/login');
         $this->put('/admin/suppliers/'.$supplier->id)->assertRedirect('/login');
+        $this->post('/admin/suppliers/'.$supplier->id.'/reveal-identifier')->assertRedirect('/login');
         $this->post('/admin/suppliers/test-active')->assertRedirect('/login');
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertRedirect('/login');
         $this->get('/admin/suppliers/'.$supplier->id.'/catalog')->assertRedirect('/login');
@@ -45,6 +46,7 @@ class AdminSupplierAccountTest extends TestCase
         $this->actingAs($client)->get('/admin/suppliers')->assertForbidden();
         $this->post('/admin/suppliers')->assertForbidden();
         $this->put('/admin/suppliers/'.$supplier->id)->assertForbidden();
+        $this->post('/admin/suppliers/'.$supplier->id.'/reveal-identifier')->assertForbidden();
         $this->post('/admin/suppliers/test-active')->assertForbidden();
         $this->post('/admin/suppliers/'.$supplier->id.'/catalog-sync')->assertForbidden();
         $this->get('/admin/suppliers/'.$supplier->id.'/catalog')->assertForbidden();
@@ -86,6 +88,7 @@ class AdminSupplierAccountTest extends TestCase
         foreach ([
             'admin.suppliers.store',
             'admin.suppliers.update',
+            'admin.suppliers.reveal-identifier',
             'admin.suppliers.test-active',
             'admin.suppliers.catalog-sync',
             'admin.suppliers.catalog-import',
@@ -200,9 +203,16 @@ class AdminSupplierAccountTest extends TestCase
 
         $this->get('/admin/suppliers')
             ->assertOk()
-            ->assertSee($username)
+            ->assertDontSee($username)
             ->assertDontSee($password)
             ->assertSee('已加密保存');
+
+        $this->postJson('/admin/suppliers/'.$supplier->id.'/reveal-identifier')
+            ->assertOk()->assertExactJson(['identifier' => $username]);
+        $revealAudit = AuditLog::query()->where('action', 'supplier.identifier_revealed')->sole();
+        $this->assertTrue($revealAudit->after['identifier_revealed']);
+        $this->assertStringNotContainsString($username, $revealAudit->toJson());
+        $this->assertStringNotContainsString($password, $revealAudit->toJson());
     }
 
     public function test_legacy_unbounded_credit_option_accepts_only_boolean_true(): void
