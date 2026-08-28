@@ -3905,10 +3905,46 @@ a.mono-link:hover {
     }
 }
 /* Compact controls shared by credential and runtime-setting forms. */
-.password-field { display: flex; align-items: stretch; gap: 8px; }
-.password-field input { flex: 1; min-width: 0; }
-.password-field button, .sensitive-toggle { border: 1px solid var(--line, #d9dfe7); background: transparent; border-radius: 8px; padding: 0 10px; color: inherit; cursor: pointer; }
-.sensitive-toggle { padding: 3px 7px; font-size: 12px; }
-.site-logo { width: 38px; height: 38px; object-fit: contain; border-radius: 8px; }
-.audit-change { min-width: 320px; max-width: 620px; padding-top: 10px; }
-.audit-change pre { white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; padding: 10px; background: rgba(15, 23, 42, .06); border-radius: 8px; font-size: 12px; }
+.password-field {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+.password-field input {
+    flex: 1;
+    min-width: 0;
+}
+.password-field button,
+.sensitive-toggle {
+    border: 1px solid var(--line, #d9dfe7);
+    background: transparent;
+    border-radius: 8px;
+    padding: 0 10px;
+    color: inherit;
+    cursor: pointer;
+}
+.sensitive-toggle {
+    padding: 3px 7px;
+    font-size: 12px;
+}
+.site-logo {
+    width: 38px;
+    height: 38px;
+    object-fit: contain;
+    border-radius: 8px;
+}
+.audit-change {
+    min-width: 320px;
+    max-width: 620px;
+    padding-top: 10px;
+}
+.audit-change pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow: auto;
+    padding: 10px;
+    background: rgba(15, 23, 42, 0.06);
+    border-radius: 8px;
+    font-size: 12px;
+}

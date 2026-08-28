@@ -156,7 +156,10 @@ class AdminSupplierAccountTest extends TestCase
         ]))->assertSessionHasNoErrors();
         $this->assertFalse(SupplierAccount::query()->where('code', 'tls-disabled')->sole()->verifiesTls());
 
-        $unsupported = $this->supplier(['driver' => 'unsupported_driver']);
+        $unsupported = $this->supplier([
+            'driver' => 'unsupported_driver',
+            'name' => 'Unsupported supplier account',
+        ]);
         $this->get('/admin/suppliers')->assertDontSee($unsupported->name);
         $this->put('/admin/suppliers/'.$unsupported->id, $this->accountPayload())
             ->assertNotFound();

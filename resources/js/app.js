@@ -161,16 +161,21 @@ document.addEventListener("click", async (event) => {
 
     const passwordToggle = event.target.closest("[data-password-toggle]");
     if (passwordToggle) {
-        const input = passwordToggle.closest(".password-field")?.querySelector("input");
+        const input = passwordToggle
+            .closest(".password-field")
+            ?.querySelector("input");
         if (!input) return;
         input.type = input.type === "password" ? "text" : "password";
-        passwordToggle.textContent = input.type === "password" ? "查看" : "隐藏";
+        passwordToggle.textContent =
+            input.type === "password" ? "查看" : "隐藏";
         return;
     }
 
     const sensitiveToggle = event.target.closest("[data-sensitive-toggle]");
     if (sensitiveToggle) {
-        const value = sensitiveToggle.parentElement?.querySelector("[data-sensitive-value]");
+        const value = sensitiveToggle.parentElement?.querySelector(
+            "[data-sensitive-value]",
+        );
         if (!value) return;
         const visible = sensitiveToggle.dataset.visible === "true";
         if (visible) {
@@ -183,7 +188,9 @@ document.addEventListener("click", async (event) => {
 
         sensitiveToggle.disabled = true;
         try {
-            const response = await window.axios.post(sensitiveToggle.dataset.revealUrl);
+            const response = await window.axios.post(
+                sensitiveToggle.dataset.revealUrl,
+            );
             value.textContent = response.data.identifier;
             value.dataset.visible = response.data.identifier;
             sensitiveToggle.dataset.visible = "true";
