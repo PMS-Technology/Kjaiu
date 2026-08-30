@@ -3,13 +3,15 @@
 ## Production Prerequisites
 
 - Linux or another supported PHP host
-- 64-bit PHP 8.2 or newer and the extensions listed in `README.md`
+- 64-bit PHP 8.3 or newer and the extensions listed in `README.md`
 - Composer 2 when building from source
 - MySQL 5.7.8+ or 8.x using InnoDB and `utf8mb4`; CI covers 5.7.44 and 8.4
 - Node.js `^20.19.0` or `>=22.12.0` when building frontend assets from source
 - A TLS-enabled web server with the document root set to `public/`
 - A process supervisor for queue workers if asynchronous jobs are added
 - Cron or an equivalent scheduler
+
+Laravel 13 is configured to retain PHP session serialization during this upgrade, so existing login sessions remain valid. Cache object unserialization is disabled by default.
 
 SQLite is suitable for fast local feature tests only. It does not validate Kjaiu's MySQL row-lock, deadlock retry, decimal, and concurrent checkout behavior.
 

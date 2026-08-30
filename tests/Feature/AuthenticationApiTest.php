@@ -313,9 +313,10 @@ class AuthenticationApiTest extends TestCase
         $this->assertGuest();
     }
 
-    public function test_root_redirects_to_the_portal_and_guests_are_sent_to_login(): void
+    public function test_root_renders_the_public_homepage_and_protected_areas_require_login(): void
     {
-        $this->get('/')->assertRedirect('/portal');
+        $this->withoutVite();
+        $this->get('/')->assertOk()->assertSee('云服务不该复杂')->assertSee('开始使用');
         $this->get('/portal')->assertRedirect('/login');
         $this->get('/admin')->assertRedirect('/login');
     }

@@ -1,10 +1,11 @@
 <?php
 
-use App\Http\Controllers\Web\AuthController;
 use App\Http\Controllers\Web\AuditLogController;
+use App\Http\Controllers\Web\AuthController;
 use App\Http\Controllers\Web\CustomerController;
 use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\FinanceController;
+use App\Http\Controllers\Web\HomeController;
 use App\Http\Controllers\Web\InvoiceController;
 use App\Http\Controllers\Web\Portal\CartController as PortalCartController;
 use App\Http\Controllers\Web\Portal\DashboardController as PortalDashboardController;
@@ -20,7 +21,7 @@ use App\Http\Controllers\Web\SupplierController;
 use App\Http\Controllers\Web\SupplierOperationController;
 use Illuminate\Support\Facades\Route;
 
-Route::redirect('/', '/portal');
+Route::get('/', HomeController::class)->middleware('active:true')->name('home');
 
 Route::get('/login', [AuthController::class, 'create'])->name('login');
 Route::post('/login', [AuthController::class, 'store'])

@@ -12,9 +12,12 @@ class EnsureActiveUser
 {
     public const CREDENTIAL_VERSION_SESSION_KEY = 'auth.web_credential_version';
 
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, string $optional = 'false'): Response
     {
         $authenticatedUser = $request->user();
+        if ($authenticatedUser === null && $optional === 'true') {
+            return $next($request);
+        }
         $user = $authenticatedUser
             ? User::query()->find($authenticatedUser->getAuthIdentifier())
             : null;

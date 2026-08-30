@@ -1,6 +1,6 @@
 # Kjaiu
 
-Kjaiu 是一套基于 Laravel 12 的账务与财务系统，提供客户门户、管理后台、商品与服务管理、订单结算、账单支付、余额交易及供应商开通能力，并提供与 IDCsmart Finance 核心接口兼容的 API。
+Kjaiu 是一套基于 Laravel 13 的账务与财务系统，提供公开官网、客户门户、管理后台、商品与服务管理、订单结算、账单支付、余额交易及供应商开通能力，并提供与 IDCsmart Finance 核心接口兼容的 API。
 
 ## 主要功能
 
@@ -15,17 +15,17 @@ Kjaiu 是一套基于 Laravel 12 的账务与财务系统，提供客户门户�
 
 ## 技术栈
 
-- PHP 8.2 或更高版本（64 位）
-- Laravel 12
+- PHP 8.3 或更高版本（64 位）
+- Laravel 13
 - MySQL 5.7.8+ 或 MySQL 8.x
 - Blade、Tailwind CSS 4、Vite 7
-- PHPUnit 11
+- PHPUnit 12
 
 ## 环境要求
 
 开始前请准备：
 
-- PHP 8.2+（64 位）
+- PHP 8.3+（64 位）
 - Composer 2
 - MySQL，使用 InnoDB、`utf8mb4` 字符集
 - Node.js `^20.19.0` 或 `>=22.12.0`
