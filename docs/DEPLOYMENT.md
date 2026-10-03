@@ -17,8 +17,9 @@ Laravel 13 重写实现：功能近似，并且**上下游 API 与 `/v1` 公共 
 
 ## 数据库
 
-生产库为 `kjaiu`，测试库为 `kjaiu_testing`。两者都已导入与原始平台**逐表一致**的
-163 张 `shd_` 前缀表结构。
+站点库为 `kjaiu_782778_xyz`，已导入与原始平台**逐表一致**的 163 张 `shd_` 前缀表结构。
+kjaiu.782778.xyz 本身就是测试站点，没有单独的测试库：测试套件直接运行在这个库上，
+靠事务回滚保持数据不变（规则见 [README](../README.md) 的「测试」一节）。
 
 `.env` 关键配置：
 
@@ -30,8 +31,8 @@ APP_URL=https://kjaiu.782778.xyz
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
 DB_PORT=3306
-DB_DATABASE=kjaiu
-DB_USERNAME=kjaiu
+DB_DATABASE=kjaiu_782778_xyz
+DB_USERNAME=kjaiu_782778_xyz
 DB_PASSWORD=...
 
 # 会话与缓存使用文件驱动（镜像库中没有 cache/sessions 表）
@@ -133,7 +134,7 @@ mysqldump --no-create-info --single-transaction mfcw_782778_xyz \
     shd_ticket shd_ticket_reply shd_servers shd_server_groups \
     > /tmp/kjaiu_migrate.sql
 
-mysql -D kjaiu < /tmp/kjaiu_migrate.sql
+mysql -D kjaiu_782778_xyz < /tmp/kjaiu_migrate.sql
 ```
 
 注意：客户端密码与管理员密码的散列方案完全一致（管理员 `md5`，客户 `###` + 双重 `md5`），

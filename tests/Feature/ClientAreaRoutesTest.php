@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\Support\InteractsWithClientArea;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
@@ -12,9 +13,14 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
  * Every GET route the client area exposes is exercised while signed in, so a
  * controller, Blade or query error surfaces as a test failure rather than a
  * blank page in production.
+ *
+ * The route sweep touches nearly every client-area page, which means it writes
+ * through tables the fixture cleanup does not know about; the transaction is
+ * what keeps a run from leaving rows in the database.
  */
 class ClientAreaRoutesTest extends BaseTestCase
 {
+    use DatabaseTransactions;
     use InteractsWithClientArea;
 
     public function createApplication()

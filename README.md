@@ -86,7 +86,9 @@ scripts/deploy.sh       发布脚本
 php artisan test
 ```
 
-测试使用独立的 `kjaiu_testing` 库（需先导入同一份表结构，见 `.env.testing`）。
+kjaiu.782778.xyz 本身就是测试站点，测试直接运行在站点库 `kjaiu_782778_xyz` 上（见 `phpunit.xml`），
+涉及数据库的用例都包在事务里，结束即回滚。因此读写数据库的测试类必须 `use DatabaseTransactions`，
+不能用 `RefreshDatabase`，也不要调用 `migrate:fresh` / `db:wipe`，否则会清空站点数据。
 覆盖重点：旧版密码散列与校验、JWT 签发、循环计费与建账、优惠码、配置项加价、余额结算与流水记账。
 
 ## 兼容性说明

@@ -10,6 +10,7 @@ use App\Models\ProductFirstGroup;
 use App\Models\ProductGroup;
 use App\Models\TicketDepartment;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\DB;
 
@@ -19,9 +20,15 @@ use Illuminate\Support\Facades\DB;
  * These endpoints are called directly by the client-area JavaScript, so their
  * request field names and `{status, msg, data}` envelope are part of the
  * contract with the original templates.
+ *
+ * Every case runs inside a transaction. The fixture client is cleaned up by
+ * the trait as well, but `removeClient()` can only delete from tables it knows
+ * by name, and 47 tables carry a `uid` column — the rollback is what actually
+ * guarantees the suite leaves no rows behind.
  */
 class ClientAreaAjaxTest extends BaseTestCase
 {
+    use DatabaseTransactions;
     use InteractsWithClientArea;
 
     public function createApplication()

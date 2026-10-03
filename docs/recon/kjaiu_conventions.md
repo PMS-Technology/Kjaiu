@@ -8,11 +8,16 @@ upstream/downstream API surface.
 - PHP 8.3, Laravel 13.34, MySQL 5.7.44, no Redis (cache = file), queue = database.
 - Working dir: `/www/Project/Kjaiu`. Deploy target: `/www/wwwroot/kjaiu.782778.xyz`
   (nginx root = `<site>/public`, PHP 8.3).
-- DB: `kjaiu` / user `kjaiu`. Client config for CLI SQL: `mysql --defaults-extra-file=/tmp/.kjaiu.cnf -D kjaiu`.
-- **All 163 tables already exist** in the `kjaiu` database, byte-identical to the
+- DB: `kjaiu_782778_xyz` / user `kjaiu_782778_xyz`. Client config for CLI SQL:
+  `mysql --defaults-extra-file=/tmp/.kjaiu.cnf -D kjaiu_782778_xyz`.
+- **All 163 tables already exist** in the `kjaiu_782778_xyz` database, byte-identical to the
   original's schema, with prefix `shd_` (set via `DB_PREFIX=shd_` in config/database.php).
   Baseline rows (settings, auth rules, nav, menus, currencies, ticket statuses) are
   already imported. Do NOT create migrations for these tables — they exist.
+- Tests run against that same database: kjaiu.782778.xyz is the designated test site and
+  there is no separate test database. Every test class that touches the database must
+  `use DatabaseTransactions`; never `RefreshDatabase`, `migrate:fresh` or `db:wipe`,
+  which would wipe the site.
 
 ## Money / time conventions
 - Timestamps are **unix integers** in `create_time` / `update_time` / `*_time` columns.
