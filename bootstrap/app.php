@@ -15,7 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         apiPrefix: '',
         // The administrator API is registered as a web route file so it keeps
-        // session handling; its `admin123` prefix is declared in the file.
+        // session handling; its prefix comes from config('kjaiu.admin_path').
         then: function () {
             Route::middleware('web')
                 ->group(base_path('routes/admin.php'));

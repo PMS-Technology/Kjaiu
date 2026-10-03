@@ -1,8 +1,9 @@
 import axios from 'axios';
 
-// The administrator API lives under the panel path; the base is injected by
-// the Blade host page so the SPA works regardless of the configured path.
-const baseURL = (window.kjaiuAdmin && window.kjaiuAdmin.apiBase) || '/admin123';
+// The administrator API lives under the panel path. Nothing injects
+// window.kjaiuAdmin today, so the literal below is what actually applies; it
+// must stay in step with `kjaiu.admin_path` (KJAIU_ADMIN_PATH).
+const baseURL = (window.kjaiuAdmin && window.kjaiuAdmin.apiBase) || '/admin';
 
 export const client = axios.create({
     baseURL,

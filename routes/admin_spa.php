@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-$adminPath = config('kjaiu.admin_path', 'admin123');
+$adminPath = config('kjaiu.admin_path', 'admin');
 
 Route::get($adminPath, AdminSpaController::class)->name('admin.spa');
 Route::get($adminPath.'/', AdminSpaController::class);

@@ -114,9 +114,13 @@ class AuthController extends ApiController
             return $this->fail('API密钥错误');
         }
 
-        return $this->ok([
-            'jwt' => (new JwtService())->issue($client, $request->ip()),
-        ], '登录成功');
+        $jwt = (new JwtService())->issue($client, $request->ip());
+
+        // The live platform returns the token at the top level next to
+        // `status` (`{"jwt":"...","status":200,"msg":"login successful"}`),
+        // while the documented/older shape nests it under `data`. Emit both so
+        // downstreams written against either generation keep working.
+        return $this->ok(['jwt' => $jwt], '登录成功', ['jwt' => $jwt]);
     }
 
     /**

@@ -117,9 +117,38 @@ class SupplierClient
             return $cart;
         }
 
-        $position = $cart['data']['position'] ?? 0;
+        // The add-to-cart reply is a bare `{"status":200,"msg":"Added successfully"}`
+        // with no position, so the index has to come from the cart itself. Only
+        // the entry we just appended is ours: checking out every position would
+        // also buy whatever else the upstream account had left in its cart.
+        $position = $this->lastCartPosition();
 
-        return $this->checkout((array) $position, (string) ($payload['payment'] ?? 'credit'));
+        return $this->checkout([$position], (string) ($payload['payment'] ?? ''));
+    }
+
+    /**
+     * Index of the most recently added line in the upstream cart.
+     *
+     * The cart listing carries no explicit position field — the index of an
+     * entry within `cart_products` is the value `cart/checkout` expects, and a
+     * newly added product is appended to the end.
+     */
+    public function lastCartPosition(): int
+    {
+        $result = $this->get('cart');
+
+        if (! $result['status']) {
+            return 0;
+        }
+
+        $data = is_array($result['data']) ? $result['data'] : [];
+        $items = $data['cart_products'] ?? [];
+
+        if (! is_array($items) || $items === []) {
+            return 0;
+        }
+
+        return max(0, count(array_values($items)) - 1);
     }
 
     /**
@@ -160,10 +189,14 @@ class SupplierClient
     /**
      * Check out the upstream cart for the given positions.
      *
+     * `payment` is the gateway identifier; the live platform rejects unknown
+     * values with "Wrong payment method" and treats an empty string as "use
+     * the account's default gateway", which is what an unattended order wants.
+     *
      * @param  array<int, int|string>  $positions
      * @return array{status:bool,msg:string,data:mixed}
      */
-    public function checkout(array $positions = [0], string $payment = 'credit'): array
+    public function checkout(array $positions = [0], string $payment = ''): array
     {
         $result = $this->post('cart/checkout', [
             'payment' => $payment,
@@ -307,7 +340,9 @@ class SupplierClient
 
         $result = $this->post("hosts/{$id}/renew", [
             'billingcycle' => (string) ($host->billingcycle ?: 'monthly'),
-            'payment' => 'credit',
+            // Empty means "use the account's default gateway"; the live
+            // platform rejects an unrecognised identifier such as "credit".
+            'payment' => '',
         ]);
 
         if (! $result['status']) {
@@ -525,9 +560,10 @@ class SupplierClient
         $duration = (microtime(true) - $started) * 1000;
         $httpStatus = $response->status();
 
-        // Expired or revoked token: drop the cache and try once more with a
-        // freshly minted one.
-        if ($httpStatus === 401 && ! $isRetry) {
+        // Expired or revoked token. A bare HTTP 401 means the same thing, and
+        // the live platform additionally reports it as `status` 405 inside a
+        // 200 response ("请登陆后再试"), so both shapes must re-authenticate.
+        if (! $isRetry && ($httpStatus === 401 || $this->isUnauthenticatedBody($response))) {
             $this->forgetToken();
             $this->log($method, $path, $httpStatus, $duration, false, 'token expired, retrying');
 
@@ -546,6 +582,26 @@ class SupplierClient
         );
 
         return $parsed;
+    }
+
+    /**
+     * Whether a reply signals a missing or expired token without using 401.
+     *
+     * The live platform answers an unauthenticated call with `status` 405 and
+     * the message "请登陆后再试" inside an HTTP 200 response, so the HTTP status
+     * alone is not enough to detect it.
+     */
+    protected function isUnauthenticatedBody(Response $response): bool
+    {
+        $json = $response->json();
+
+        if (! is_array($json)) {
+            return false;
+        }
+
+        $status = $json['status'] ?? null;
+
+        return $status === 405 || $status === '405';
     }
 
     /**
@@ -715,10 +771,15 @@ class SupplierClient
 
         $duration = (microtime(true) - $started) * 1000;
         $json = $response->json();
-        $jwt = is_array($json) ? ($json['data']['jwt'] ?? null) : null;
+        $jwt = $this->extractJwt(is_array($json) ? $json : null);
 
-        if (! is_string($jwt) || $jwt === '') {
-            $this->log('POST', 'login_api', $response->status(), $duration, false, 'no jwt in response');
+        if ($jwt === null) {
+            // Surface the upstream's own message so a credential problem is
+            // distinguishable from an unexpected payload shape.
+            $msg = is_array($json) ? (string) ($json['msg'] ?? '') : '';
+            $detail = $msg !== '' ? $msg : 'no jwt in response';
+
+            $this->log('POST', 'login_api', $response->status(), $duration, false, $detail);
 
             return null;
         }
@@ -729,6 +790,31 @@ class SupplierClient
         $this->log('POST', 'login_api', $response->status(), $duration, true, 'authenticated');
 
         return $jwt;
+    }
+
+    /**
+     * Pull the JWT out of a login reply.
+     *
+     * The live platform returns it at the top level next to `status`:
+     *   {"jwt":"...", "status":200, "msg":"login successful"}
+     * Older builds (and the shape this class originally assumed) nest it under
+     * `data`. Accept both so neither upstream generation breaks the handshake.
+     *
+     * @param  array<string, mixed>|null  $json
+     */
+    protected function extractJwt(?array $json): ?string
+    {
+        if ($json === null) {
+            return null;
+        }
+
+        foreach ([$json['jwt'] ?? null, $json['data']['jwt'] ?? null] as $candidate) {
+            if (is_string($candidate) && $candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**

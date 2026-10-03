@@ -154,7 +154,7 @@ php artisan up
 ## 安全说明
 
 - 生产环境务必保持 `APP_DEBUG=false`；调试模式会把内部异常详情返回给接口调用方。
-- 管理后台路径由 `KJAIU_ADMIN_PATH` 配置（默认 `admin123`），上线前建议更换。
+- 管理后台路径由 `KJAIU_ADMIN_PATH` 配置（默认 `admin`）；如需隐藏后台，可改为一个不易猜测的路径。
 - 首次部署后请立即从环境配置中移除 `KJAIU_ADMIN_PASSWORD`，避免重复初始化。
 - `/v1` 接口使用独立的 JWT 密钥 `KJAIU_JWT_SECRET`（未设置时回退到 `APP_KEY`），
   轮换该密钥会使所有已签发的下游令牌立即失效。

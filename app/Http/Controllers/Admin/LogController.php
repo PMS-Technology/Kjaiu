@@ -336,7 +336,7 @@ class LogController extends AdminController
 
         return $this->flat($list, $total, $page, $limit, [
             'type' => $source,
-            'identify' => '/admin123/log_record/'.$source,
+            'identify' => '/' . trim((string) config('kjaiu.admin_path', 'admin'), '/') . '/log_record/' . $source,
         ]);
     }
 

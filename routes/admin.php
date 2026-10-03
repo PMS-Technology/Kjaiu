@@ -29,7 +29,7 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 |
 | JSON endpoints consumed by the admin SPA. Paths mirror the original
-| platform's `/admin123/*` surface, so integrations keep working.
+| platform's `/admin/*` surface, so integrations keep working.
 |
 | Every response uses the { status, msg, data } envelope (plus the SPA's
 | `identify` / `action` / `per_page_limit` extras), and everything except the
@@ -39,7 +39,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::prefix(config('kjaiu.admin_path', 'admin123'))->group(function () {
+Route::prefix(config('kjaiu.admin_path', 'admin'))->group(function () {
 
     // --- Public: administrator authentication ---------------------------
     Route::get('login_page', [AuthController::class, 'loginPage']);

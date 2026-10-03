@@ -17,10 +17,26 @@ use Tests\TestCase;
  * a downstream installation of the original platform speaks exactly this
  * protocol, so the requests it produces and the way it reads replies are
  * asserted here rather than only exercised against a live supplier.
+ *
+ * Every fixture below mirrors a reply captured from a real ZJMF 3.7.6
+ * installation. The shapes matter: the live platform returns the login token
+ * at the top level (`{"jwt":...,"status":200,"msg":"login successful"}`), not
+ * under `data`, and reports an unauthenticated call as `status` 405 rather
+ * than an HTTP 401.
  */
 class UpstreamProtocolTest extends TestCase
 {
     use DatabaseTransactions;
+
+    /**
+     * A login reply in the shape the live platform actually sends.
+     *
+     * @return array<string, mixed>
+     */
+    protected function liveLoginReply(string $jwt): array
+    {
+        return ['jwt' => $jwt, 'status' => 200, 'msg' => 'login successful'];
+    }
 
     protected function setUp(): void
     {
@@ -34,15 +50,11 @@ class UpstreamProtocolTest extends TestCase
         $api = $this->makeSupplier();
 
         Http::fake([
-            'upstream.test/v1/login_api' => Http::response([
-                'status' => 200,
-                'msg' => '登录成功',
-                'data' => ['jwt' => 'upstream-jwt-token'],
-            ]),
+            'upstream.test/v1/login_api' => Http::response($this->liveLoginReply('upstream-jwt-token')),
             'upstream.test/v1/products*' => Http::response([
                 'status' => 200,
-                'msg' => '请求成功',
-                'data' => ['list' => []],
+                'msg' => 'Success message',
+                'data' => ['first_group' => [], 'currency' => ['id' => 1, 'code' => 'CNY']],
             ]),
         ]);
 
@@ -67,6 +79,52 @@ class UpstreamProtocolTest extends TestCase
         });
     }
 
+    /**
+     * The regression that made every real handshake fail: the token lives at
+     * the top level of the reply. Reading only `data.jwt` yields null here.
+     */
+    public function test_the_token_is_read_from_the_top_level_of_the_login_reply(): void
+    {
+        $api = $this->makeSupplier();
+
+        Http::fake([
+            'upstream.test/v1/login_api' => Http::response($this->liveLoginReply('top-level-token')),
+            'upstream.test/v1/hosts*' => Http::response([
+                'status' => 200, 'msg' => '请求成功', 'data' => ['total' => 0, 'host' => []],
+            ]),
+        ]);
+
+        $result = (new SupplierClient($api))->hostStatus(new Host([
+            'uid' => 1, 'productid' => 1, 'domain' => 'example.test',
+            'billingcycle' => 'monthly', 'upstream_configoption' => json_encode(['upstream_host_id' => 5]),
+        ]));
+
+        // A failed handshake would surface as "上游接口登录失败".
+        Http::assertSent(fn ($request) => $request->hasHeader('authorization', 'JWT top-level-token'));
+        $this->assertNotSame('上游接口登录失败', $result['msg']);
+    }
+
+    /**
+     * Some builds nest the token under `data`; that shape must keep working.
+     */
+    public function test_a_nested_token_is_still_accepted(): void
+    {
+        $api = $this->makeSupplier();
+
+        Http::fake([
+            'upstream.test/v1/login_api' => Http::response([
+                'status' => 200, 'msg' => '登录成功', 'data' => ['jwt' => 'nested-token'],
+            ]),
+            'upstream.test/v1/products*' => Http::response([
+                'status' => 200, 'msg' => '请求成功', 'data' => [],
+            ]),
+        ]);
+
+        (new SupplierClient($api))->products();
+
+        Http::assertSent(fn ($request) => $request->hasHeader('authorization', 'JWT nested-token'));
+    }
+
     public function test_a_failed_login_returns_a_failure_envelope_rather_than_throwing(): void
     {
         $api = $this->makeSupplier();
@@ -75,7 +133,6 @@ class UpstreamProtocolTest extends TestCase
             'upstream.test/v1/login_api' => Http::response([
                 'status' => 400,
                 'msg' => 'Account or API key error',
-                'data' => null,
             ]),
         ]);
 
@@ -84,6 +141,41 @@ class UpstreamProtocolTest extends TestCase
         $this->assertFalse($result['status']);
         $this->assertIsString($result['msg']);
         $this->assertNotSame('', $result['msg']);
+    }
+
+    /**
+     * The live platform rejects a missing or expired token with `status` 405
+     * inside a 200 response, so the re-authentication path must be driven by
+     * that code as well as by a bare HTTP 401.
+     */
+    public function test_a_status_405_body_triggers_re_authentication(): void
+    {
+        $api = $this->makeSupplier();
+
+        $logins = 0;
+
+        Http::fake(function ($request) use (&$logins) {
+            if (str_contains($request->url(), '/v1/login_api')) {
+                $logins++;
+
+                return Http::response($this->liveLoginReply('token-' . $logins));
+            }
+
+            if ($request->hasHeader('authorization', 'JWT token-1')) {
+                return Http::response(['status' => 405, 'msg' => '请登陆后再试']);
+            }
+
+            return Http::response([
+                'status' => 200,
+                'msg' => '请求成功',
+                'data' => ['total' => 1, 'host' => [['id' => 7]]],
+            ]);
+        });
+
+        $result = (new SupplierClient($api))->request('GET', 'hosts');
+
+        $this->assertTrue($result['status'], 'retry after a 405 body should succeed');
+        $this->assertSame(2, $logins, 'exactly one re-authentication should happen');
     }
 
     public function test_an_expired_token_triggers_one_re_authentication(): void
@@ -96,11 +188,7 @@ class UpstreamProtocolTest extends TestCase
             if (str_contains($request->url(), '/v1/login_api')) {
                 $logins++;
 
-                return Http::response([
-                    'status' => 200,
-                    'msg' => '登录成功',
-                    'data' => ['jwt' => 'token-' . $logins],
-                ]);
+                return Http::response($this->liveLoginReply('token-' . $logins));
             }
 
             // The first authenticated attempt is rejected, the retry succeeds.
@@ -128,9 +216,7 @@ class UpstreamProtocolTest extends TestCase
         $api = $this->makeSupplier();
 
         Http::fake([
-            'upstream.test/v1/login_api' => Http::response([
-                'status' => 200, 'msg' => 'ok', 'data' => ['jwt' => 'jwt-1'],
-            ]),
+            'upstream.test/v1/login_api' => Http::response($this->liveLoginReply('jwt-1')),
             'upstream.test/v1/hosts*' => Http::response([
                 'status' => 200,
                 'msg' => '请求成功',
@@ -153,9 +239,7 @@ class UpstreamProtocolTest extends TestCase
         $api = $this->makeSupplier();
 
         Http::fake([
-            'upstream.test/v1/login_api' => Http::response([
-                'status' => 200, 'msg' => 'ok', 'data' => ['jwt' => 'jwt-1'],
-            ]),
+            'upstream.test/v1/login_api' => Http::response($this->liveLoginReply('jwt-1')),
             'upstream.test/v1/*' => fn () => throw new \Illuminate\Http\Client\ConnectionException('connection refused'),
         ]);
 
@@ -203,9 +287,7 @@ class UpstreamProtocolTest extends TestCase
         ]);
 
         Http::fake([
-            'upstream.test/v1/login_api' => Http::response([
-                'status' => 200, 'msg' => 'ok', 'data' => ['jwt' => 'jwt-1'],
-            ]),
+            'upstream.test/v1/login_api' => Http::response($this->liveLoginReply('jwt-1')),
             'upstream.test/v1/*' => Http::response([
                 'status' => 200, 'msg' => '请求成功', 'data' => ['host_id' => 88],
             ]),

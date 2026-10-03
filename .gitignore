@@ -29,3 +29,10 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Recon artefacts scraped from the reference installation. The text specs
+# (specs, route table, column list) are committed; the raw page snapshots and
+# the scraping scripts that regenerate them are not.
+/docs/recon/docpages
+/docs/recon/work
+/docs/recon/api_admin

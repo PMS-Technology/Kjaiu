@@ -42,7 +42,7 @@ class AdminServiceProvider extends ServiceProvider
             return false;
         }
 
-        $path = '/'.trim((string) config('kjaiu.admin_path', 'admin123'), '/');
+        $path = '/'.trim((string) config('kjaiu.admin_path', 'admin'), '/');
 
         foreach ($this->app['router']->getRoutes() as $route) {
             if ('/'.$route->uri() === $path.'/login_page') {
