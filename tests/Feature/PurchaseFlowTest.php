@@ -82,6 +82,73 @@ class PurchaseFlowTest extends TestCase
         $this->assertStringContainsString('50.00', $response->getContent());
     }
 
+    /**
+     * Downstream integrations read the live platform's flat product rows, so
+     * the tree wrapper, the flattened price triple and the `ontrial` object are
+     * asserted explicitly rather than only by substring.
+     *
+     * The catalogue is located by name: the development database already holds
+     * groups of its own, so positional indexing would be flaky.
+     */
+    public function test_the_storefront_matches_the_live_product_summary_shape(): void
+    {
+        $body = $this->getJson('/v1/products')->assertOk()->json('data');
+
+        $this->assertSame(['id', 'code', 'prefix', 'suffix'], array_keys($body['currency']));
+
+        $first = collect($body['first_group'])->firstWhere('name', 'Flow category');
+        $this->assertNotNull($first, 'The fixture category is missing from the storefront.');
+        $this->assertSame([], $first['fields']);
+
+        $group = collect($first['group'])->firstWhere('name', 'Flow group');
+        $this->assertNotNull($group, 'The fixture group is missing from the storefront.');
+        $this->assertSame([], $group['fields']);
+
+        $product = collect($group['products'])->firstWhere('name', 'Flow product');
+        $this->assertNotNull($product, 'The fixture product is missing from the storefront.');
+
+        // The default cycle is the first offered one in schema order, and the
+        // amount is a two-decimal string like the live platform emits.
+        $this->assertSame('monthly', $product['billingcycle']);
+        $this->assertSame('50.00', $product['product_price']);
+        $this->assertSame('10.00', $product['setup_fee']);
+        $this->assertSame(['ontrial' => 0], $product['ontrial']);
+
+        // Prices are flattened, not nested under a `pricing` map.
+        $this->assertArrayNotHasKey('pricing', $product);
+        $this->assertArrayNotHasKey('pay_type', $product);
+    }
+
+    /**
+     * The configuration form hangs the cycle list, options and custom fields
+     * off the product row and reports the currency as a one-element array.
+     */
+    public function test_the_configuration_form_matches_the_live_shape(): void
+    {
+        $data = $this->getJson('/v1/productsconfig?product_id=' . $this->product->id)
+            ->assertOk()
+            ->assertJsonPath('status', 200)
+            ->json('data');
+
+        $this->assertCount(1, $data['currency']);
+
+        $product = $data['first_group'][0]['group'][0]['products'][0];
+        $this->assertSame('Flow product', $product['name']);
+        $this->assertSame('monthly', $product['cycle'][0]['billingcycle']);
+        $this->assertSame('50.00', $product['cycle'][0]['product_price']);
+        $this->assertSame('月付', $product['cycle'][0]['billingcycle_zh']);
+        $this->assertSame([], $product['configoptions']);
+        $this->assertSame([], $product['custom_fields']);
+    }
+
+    public function test_product_categories_are_wrapped_for_the_storefront(): void
+    {
+        $cates = $this->getJson('/v1/products/cates')->assertOk()->json('data.cates');
+
+        $this->assertNotNull($cates);
+        $this->assertContains('Flow category', array_column($cates, 'name'));
+    }
+
     public function test_an_unavailable_cycle_is_refused_when_pricing_a_configuration(): void
     {
         // quarterly was left at -1.00 (not offered) and must not be purchasable.

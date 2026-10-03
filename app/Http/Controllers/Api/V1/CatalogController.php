@@ -3,33 +3,76 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Product;
-use App\Models\ProductConfigGroup;
 use App\Models\ProductFirstGroup;
 use App\Models\ProductGroup;
+use App\Services\Api\ProductPresenter;
 use App\Services\PricingService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Storefront catalogue: product groups, product listings, product detail with
  * configurable options, and price totals.
  *
- * Field names follow the original API (`pricing`, `configoptions`,
- * `customfields`, `pay_type`) so downstream clients can render the same data
- * without translation.
+ * Payload shapes follow the live ZJMF 3.7.6 responses — prices are flattened
+ * onto each product row (`product_price` / `setup_fee` / `billingcycle`) and
+ * the tree is wrapped under `first_group` next to `currency`, because
+ * downstream integrations read those exact keys.
  */
 class CatalogController extends ApiController
 {
     public function __construct(
         protected PricingService $pricing = new PricingService(),
+        protected ProductPresenter $presenter = new ProductPresenter(),
     ) {
     }
 
     /**
+     * `name`/`value` rows attached to a first-level group or a product group.
+     *
+     * @return array<int, array{id:int, name:string, value:string}>
+     */
+    protected function groupFields(int $relid, string $level): array
+    {
+        $table = $level === 'first'
+            ? 'product_first_groups_customfields'
+            : 'product_groups_customfields';
+
+        return ProductPresenter::namedFields(
+            DB::table($table)->where('relid', $relid)->orderBy('id')->get()
+        );
+    }
+
+    /**
+     * The active currency, in the shape the live platform emits.
+     */
+    protected function currencyPayload(mixed $currency): ?array
+    {
+        if ($currency === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $currency->id,
+            'code' => (string) $currency->code,
+            'prefix' => (string) $currency->prefix,
+            'suffix' => (string) $currency->suffix,
+        ];
+    }
+
+    /**
      * GET /v1/products — first-level groups with their product groups.
+     *
+     * The live platform wraps the tree under `first_group` and puts the active
+     * currency beside it, so both keys are reproduced here. The optional
+     * `first_group_id` / `group_id` / `product_id` filters are accepted for
+     * signature compatibility; ZJMF 3.7.6 ignores them and always returns the
+     * whole catalogue, and matching that behaviour keeps downstreams working.
      */
     public function products()
     {
         $currencyId = $this->pricing->currencyId();
+        $currency = $this->currency();
 
         $groups = ProductFirstGroup::query()
             ->where('hidden', 0)
@@ -39,8 +82,9 @@ class CatalogController extends ApiController
 
         $data = $groups->map(function (ProductFirstGroup $first) use ($currencyId) {
             return [
-                'id' => $first->id,
-                'name' => $first->name,
+                'id' => (int) $first->id,
+                'name' => (string) $first->name,
+                'fields' => $this->groupFields($first->id, 'first'),
                 'group' => $first->groups->map(function (ProductGroup $group) use ($currencyId) {
                     $products = Product::query()
                         ->where('gid', $group->id)
@@ -50,21 +94,27 @@ class CatalogController extends ApiController
                         ->get();
 
                     return [
-                        'id' => $group->id,
-                        'name' => $group->name,
-                        'headline' => $group->headline,
-                        'tagline' => $group->tagline,
-                        'products' => $products->map(fn (Product $p) => $this->productSummary($p, $currencyId))->values()->all(),
+                        'id' => (int) $group->id,
+                        'name' => (string) $group->name,
+                        'headline' => (string) $group->headline,
+                        'tagline' => (string) $group->tagline,
+                        'fields' => $this->groupFields($group->id, 'group'),
+                        'products' => $products->map(fn (Product $p) => $this->presenter->summary($p, $currencyId))->values()->all(),
                     ];
                 })->values()->all(),
             ];
         })->values()->all();
 
-        return $this->ok($data);
+        return $this->ok([
+            'first_group' => $data,
+            'currency' => $this->currencyPayload($currency),
+        ]);
     }
 
     /**
      * GET /v1/products/cates — flat category list used by the service filters.
+     *
+     * The live platform wraps the rows under `cates`.
      */
     public function cates()
     {
@@ -72,11 +122,14 @@ class CatalogController extends ApiController
             ->where('hidden', 0)
             ->orderBy('order')
             ->get()
-            ->map(fn (ProductFirstGroup $g) => ['id' => $g->id, 'name' => $g->name])
+            ->map(fn (ProductFirstGroup $g) => [
+                'id' => (int) $g->id,
+                'name' => (string) $g->name,
+            ])
             ->values()
             ->all();
 
-        return $this->ok($cates);
+        return $this->ok(['cates' => $cates]);
     }
 
     /**
@@ -101,13 +154,16 @@ class CatalogController extends ApiController
                 ->get();
 
             return [
-                'id' => $group->id,
-                'name' => $group->name,
-                'products' => $products->map(fn (Product $p) => $this->productSummary($p, $currencyId))->values()->all(),
+                'id' => (int) $group->id,
+                'name' => (string) $group->name,
+                'headline' => (string) $group->headline,
+                'tagline' => (string) $group->tagline,
+                'fields' => $this->groupFields($group->id, 'group'),
+                'products' => $products->map(fn (Product $p) => $this->presenter->summary($p, $currencyId))->values()->all(),
             ];
         })->values()->all();
 
-        return $this->ok($data);
+        return $this->ok(['group' => $data]);
     }
 
     /**
@@ -122,10 +178,14 @@ class CatalogController extends ApiController
 
     /**
      * GET /v1/goodsconfig — configuration form for a product.
+     *
+     * The live payload nests the product under the same `first_group` tree as
+     * `/v1/products`, with `cycle`, `configoptions` and `custom_fields` hanging
+     * off the product row, and returns `currency` as a one-element array.
      */
     public function goodsConfig(Request $request)
     {
-        $productId = (int) $request->input('pid', $request->input('id', 0));
+        $productId = (int) $request->input('product_id', $request->input('pid', $request->input('id', 0)));
         $product = Product::query()->find($productId);
 
         if ($product === null) {
@@ -136,25 +196,80 @@ class CatalogController extends ApiController
             return $this->fail('商品已下架');
         }
 
+        return $this->ok($this->configPayload($product));
+    }
+
+    /**
+     * Product tree used by the configuration-form endpoints.
+     */
+    protected function configPayload(Product $product): array
+    {
         $currencyId = $this->pricing->currencyId();
         $currency = $this->currency();
+        $group = ProductGroup::query()->find($product->gid);
+        $first = $group === null ? null : ProductFirstGroup::query()->find($group->gid);
 
-        return $this->ok([
-            'product' => $this->productDetailPayload($product, $currencyId),
-            'pricing' => $this->pricingPayload($product, $currencyId),
-            'configoptions' => $this->configOptionsPayload($product, $currencyId),
-            'customfields' => $this->customFieldsPayload($product),
-            'currency' => $currency === null ? null : [
-                'id' => $currency->id,
-                'code' => $currency->code,
-                'prefix' => $currency->prefix,
-                'suffix' => $currency->suffix,
-            ],
-        ]);
+        $row = [
+            'id' => (int) $product->id,
+            'name' => (string) $product->name,
+            'description' => (string) $product->description,
+            'host' => ['host' => (string) $this->firstHostRule($product)],
+            'password' => ['password' => ''],
+            'allow_qty' => (int) $product->allow_qty,
+            'stock_control' => (int) $product->stock_control,
+            'qty' => (int) $product->qty,
+            'cycle' => $this->presenter->cycleRows($product, $currencyId),
+            'configoptions' => $this->presenter->configOptions($product, $currencyId),
+            'custom_fields' => $this->presenter->customFields($product),
+        ];
+
+        return [
+            'currency' => $currency === null ? [] : [$this->currencyPayload($currency)],
+            'first_group' => [[
+                'id' => (int) ($first->id ?? 0),
+                'name' => (string) ($first->name ?? ''),
+                'fields' => $first === null ? [] : $this->groupFields($first->id, 'first'),
+                'group' => [[
+                    'id' => (int) ($group->id ?? 0),
+                    'name' => (string) ($group->name ?? ''),
+                    'headline' => (string) ($group->headline ?? ''),
+                    'tagline' => (string) ($group->tagline ?? ''),
+                    'fields' => $group === null ? [] : $this->groupFields($group->id, 'group'),
+                    'products' => [$row],
+                ]],
+            ]],
+        ];
+    }
+
+    /**
+     * Sample hostname generated from the product's `host` rule, shown as a
+     * preview on the configuration form.
+     */
+    protected function firstHostRule(Product $product): string
+    {
+        $raw = (string) $product->host;
+
+        if ($raw === '') {
+            return '';
+        }
+
+        $decoded = json_decode($raw, true);
+
+        if (is_array($decoded)) {
+            $prefix = (string) ($decoded['prefix'] ?? $decoded['host'] ?? '');
+
+            return $prefix;
+        }
+
+        return $raw;
     }
 
     /**
      * GET /v1/products/{id} — product detail.
+     *
+     * The live platform routes this path to the service detail controller, so
+     * the richer catalogue shape is kept here for existing downstreams that
+     * rely on it.
      */
     public function productDetail(int $id)
     {
@@ -167,10 +282,10 @@ class CatalogController extends ApiController
         $currencyId = $this->pricing->currencyId();
 
         return $this->ok([
-            'product' => $this->productDetailPayload($product, $currencyId),
+            'product' => $this->presenter->detail($product, $currencyId),
             'pricing' => $this->pricingPayload($product, $currencyId),
-            'configoptions' => $this->configOptionsPayload($product, $currencyId),
-            'customfields' => $this->customFieldsPayload($product),
+            'configoptions' => $this->presenter->configOptions($product, $currencyId),
+            'customfields' => $this->presenter->customFields($product),
         ]);
     }
 
@@ -235,48 +350,7 @@ class CatalogController extends ApiController
     }
 
     /**
-     * Compact product row for list payloads.
-     */
-    protected function productSummary(Product $product, ?int $currencyId): array
-    {
-        $pricing = $this->pricing->productPricing($product, $currencyId);
-        $cycles = $pricing?->availableCycles() ?? [];
-
-        $prices = [];
-        foreach ($cycles as $cycle) {
-            $prices[$cycle] = $this->money((float) $pricing->priceFor($cycle));
-        }
-
-        return [
-            'id' => $product->id,
-            'gid' => $product->gid,
-            'name' => $product->name,
-            'type' => $product->type,
-            'description' => $product->description,
-            'stock_control' => (int) $product->stock_control,
-            'qty' => (int) $product->qty,
-            'allow_qty' => (int) $product->allow_qty,
-            'pay_type' => $product->payType(),
-            'is_featured' => (int) $product->is_featured,
-            'pricing' => $prices,
-            'product_shopping_url' => (string) $product->product_shopping_url,
-        ];
-    }
-
-    protected function productDetailPayload(Product $product, ?int $currencyId): array
-    {
-        return array_merge($this->productSummary($product, $currencyId), [
-            'is_domain' => (int) $product->is_domain,
-            'is_truename' => (int) $product->is_truename,
-            'clientscount' => (int) $product->clientscount,
-            'cancel_control' => (int) $product->cancel_control,
-            'config_options_upgrade' => (int) $product->config_options_upgrade,
-            'billing_cycle_upgrade' => (string) $product->billing_cycle_upgrade,
-        ]);
-    }
-
-    /**
-     * Pricing rows keyed by cycle, matching the original's response shape.
+     * Pricing rows keyed by cycle, used by the legacy detail payload.
      */
     protected function pricingPayload(Product $product, ?int $currencyId): array
     {
@@ -302,75 +376,5 @@ class CatalogController extends ApiController
         }
 
         return $out;
-    }
-
-    /**
-     * Configurable option groups for a product.
-     */
-    protected function configOptionsPayload(Product $product, ?int $currencyId): array
-    {
-        $groups = $this->pricing->productConfigGroups($product);
-
-        return array_map(function (ProductConfigGroup $group) use ($currencyId) {
-            return [
-                'id' => $group->id,
-                'name' => $group->name,
-                'description' => $group->description,
-                'option' => $group->options->map(function ($option) use ($currencyId) {
-                    return [
-                        'id' => $option->id,
-                        'option_name' => $option->option_name,
-                        'option_type' => (int) $option->option_type,
-                        'qty_minimum' => (int) $option->qty_minimum,
-                        'qty_maximum' => (int) $option->qty_maximum,
-                        'notes' => $option->notes,
-                        'sub' => $option->subOptions->map(function ($sub) use ($currencyId) {
-                            $pricing = $this->pricing->optionPricing($sub, $currencyId);
-                            $prices = [];
-
-                            if ($pricing !== null) {
-                                foreach (\App\Models\Pricing::CYCLES as $cycle) {
-                                    $price = $pricing->priceFor($cycle);
-
-                                    if ($price !== null) {
-                                        $prices[$cycle] = $this->money($price);
-                                    }
-                                }
-                            }
-
-                            return [
-                                'id' => $sub->id,
-                                'option_name' => $sub->option_name,
-                                'qty_minimum' => (int) $sub->qty_minimum,
-                                'qty_maximum' => (int) $sub->qty_maximum,
-                                'pricing' => $prices,
-                            ];
-                        })->values()->all(),
-                    ];
-                })->values()->all(),
-            ];
-        }, $groups);
-    }
-
-    /**
-     * Custom fields attached to a product.
-     */
-    protected function customFieldsPayload(Product $product): array
-    {
-        return \App\Models\CustomField::query()
-            ->where('type', 'product')
-            ->where('relid', $product->id)
-            ->orderBy('sortorder')
-            ->get()
-            ->map(fn (\App\Models\CustomField $field) => [
-                'id' => $field->id,
-                'fieldname' => $field->fieldname,
-                'fieldtype' => $field->fieldtype,
-                'description' => $field->description,
-                'required' => (int) $field->required,
-                'options' => $field->options(),
-            ])
-            ->values()
-            ->all();
     }
 }
