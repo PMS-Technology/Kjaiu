@@ -147,14 +147,14 @@ class AuthenticationApiTest extends TestCase
     {
         config(['kjaiu.password.authcode' => '']);
 
-        $salt = (string) \Illuminate\Support\Facades\DB::table('configuration')
-            ->where('setting', 'web_authcode')
-            ->value('value');
-
-        $this->assertNotSame('', $salt, 'the fixture database should carry a web_authcode');
+        // The salt is whatever the installation stored, so the test writes one
+        // instead of relying on a fixture row being present.
+        $salt = 'stored-salt-' . uniqid();
+        $this->putSetting('web_authcode', $salt);
 
         $hash = '###' . md5(md5($salt . 'imported-secret'));
 
+        $this->assertSame($salt, PasswordHasher::authCode());
         $this->assertTrue(PasswordHasher::checkAdmin('imported-secret', $hash));
         $this->assertFalse(PasswordHasher::checkAdmin('wrong-secret', $hash));
     }
@@ -171,6 +171,24 @@ class AuthenticationApiTest extends TestCase
         $this->assertTrue(PasswordHasher::checkAdmin('secret-pass', '###' . md5(md5('explicit-salt' . 'secret-pass'))));
     }
 
+    /**
+     * Write one settings row and drop the cached map.
+     *
+     * The tests must not depend on a fixture row being present: a fresh
+     * installation has a schema and a seeder, not a copy of the reference
+     * installation's settings.
+     */
+    protected function putSetting(string $setting, string $value): void
+    {
+        \Illuminate\Support\Facades\DB::table('configuration')->updateOrInsert(
+            ['setting' => $setting],
+            ['value' => $value, 'create_time' => time(), 'update_time' => time()],
+        );
+
+        \App\Services\Admin\SettingService::flush();
+        \App\Models\Configuration::flushCache();
+    }
+
     public function test_the_admin_login_page_reports_the_captcha_toggle(): void
     {
         $this->getJson('/admin/login_page')
@@ -184,28 +202,17 @@ class AuthenticationApiTest extends TestCase
      */
     public function test_the_captcha_endpoint_answers_with_an_image_only_when_enabled(): void
     {
-        \Illuminate\Support\Facades\DB::table('configuration')
-            ->where('setting', 'allow_login_admin_captcha')
-            ->update(['value' => '0']);
-        \App\Services\Admin\SettingService::flush();
+        $this->putSetting('allow_login_admin_captcha', '0');
 
         $disabled = $this->get('/admin/verify?name=allow_login_admin_captcha');
         $disabled->assertOk()->assertJsonPath('status', 400);
 
-        \Illuminate\Support\Facades\DB::table('configuration')
-            ->where('setting', 'allow_login_admin_captcha')
-            ->update(['value' => '1']);
-        \App\Services\Admin\SettingService::flush();
+        $this->putSetting('allow_login_admin_captcha', '1');
 
         $enabled = $this->get('/admin/verify?name=allow_login_admin_captcha');
         $enabled->assertOk();
         $this->assertStringContainsString('image/', (string) $enabled->headers->get('Content-Type'));
         $this->assertNotSame('', (string) $enabled->getContent());
-
-        \Illuminate\Support\Facades\DB::table('configuration')
-            ->where('setting', 'allow_login_admin_captcha')
-            ->update(['value' => '0']);
-        \App\Services\Admin\SettingService::flush();
     }
 
     /**
@@ -225,38 +232,28 @@ class AuthenticationApiTest extends TestCase
         $admin->setPassword('captcha-secret');
         $admin->save();
 
-        \Illuminate\Support\Facades\DB::table('configuration')
-            ->where('setting', 'allow_login_admin_captcha')
-            ->update(['value' => '1']);
-        \App\Services\Admin\SettingService::flush();
+        $this->putSetting('allow_login_admin_captcha', '1');
 
-        try {
-            // Reaching the image is what stores the expected code.
-            $this->get('/admin/verify?name=allow_login_admin_captcha')->assertOk();
-            $code = (string) session('captcha.allow_login_admin_captcha');
+        // Reaching the image is what stores the expected code.
+        $this->get('/admin/verify?name=allow_login_admin_captcha')->assertOk();
+        $code = (string) session('captcha.allow_login_admin_captcha');
 
-            $this->assertNotSame('', $code, 'the captcha endpoint should issue a code');
+        $this->assertNotSame('', $code, 'the captcha endpoint should issue a code');
 
-            $this->postJson('/admin/login', [
-                'username' => $admin->user_login,
-                'password' => 'captcha-secret',
-                'captcha' => $code,
-            ])
-                ->assertOk()
-                ->assertJsonPath('status', 200)
-                ->assertJsonPath('msg', '登录成功');
+        $this->postJson('/admin/login', [
+            'username' => $admin->user_login,
+            'password' => 'captcha-secret',
+            'captcha' => $code,
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 200)
+            ->assertJsonPath('msg', '登录成功');
 
-            // A captcha is single use: the same code must not work twice.
-            $this->postJson('/admin/login', [
-                'username' => $admin->user_login,
-                'password' => 'captcha-secret',
-                'captcha' => $code,
-            ])->assertJsonPath('status', 400);
-        } finally {
-            \Illuminate\Support\Facades\DB::table('configuration')
-                ->where('setting', 'allow_login_admin_captcha')
-                ->update(['value' => '0']);
-            \App\Services\Admin\SettingService::flush();
-        }
+        // A captcha is single use: the same code must not work twice.
+        $this->postJson('/admin/login', [
+            'username' => $admin->user_login,
+            'password' => 'captcha-secret',
+            'captcha' => $code,
+        ])->assertJsonPath('status', 400);
     }
 }

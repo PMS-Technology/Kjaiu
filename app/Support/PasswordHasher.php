@@ -17,13 +17,6 @@ class PasswordHasher
     public const CLIENT_PREFIX = '###';
 
     /**
-     * Memoised `web_authcode` read from the settings table.
-     *
-     * Null until the first lookup, so a miss is not re-queried on every check.
-     */
-    protected static ?string $settingsAuthCode = null;
-
-    /**
      * Salt used by both legacy schemes.
      *
      * The original keeps it in `shd_configuration.web_authcode`, not in a file
@@ -31,6 +24,10 @@ class PasswordHasher
      * and the table is only consulted when neither is set. Without this the
      * stored hashes of an imported installation can never verify, because they
      * were all built with that salt.
+     *
+     * The table read goes through `Configuration::all_map()`, which caches for
+     * the request lifecycle; nothing is memoised here so a flushed cache takes
+     * effect immediately.
      */
     public static function authCode(string $explicit = ''): string
     {
@@ -44,18 +41,12 @@ class PasswordHasher
             return $configured;
         }
 
-        if (self::$settingsAuthCode !== null) {
-            return self::$settingsAuthCode;
-        }
-
         try {
-            self::$settingsAuthCode = (string) (Configuration::all_map()['web_authcode'] ?? '');
+            return (string) (Configuration::all_map()['web_authcode'] ?? '');
         } catch (\Throwable) {
             // No database yet (install, key:generate): behave as an empty salt.
-            self::$settingsAuthCode = '';
+            return '';
         }
-
-        return self::$settingsAuthCode;
     }
 
     /**

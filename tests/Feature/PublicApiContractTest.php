@@ -91,12 +91,37 @@ class PublicApiContractTest extends TestCase
     #[DataProvider('protectedEndpoints')]
     public function test_protected_endpoints_accept_a_valid_token(string $uri): void
     {
+        // `/v1/affiliates` answers 400 while the programme is closed, and the
+        // reference installation happens to store the enabling flag. Relying on
+        // that row makes the test pass only against a populated database, so the
+        // precondition is written here instead.
+        $this->enableAffiliateProgramme();
+
         $client = $this->makeClient();
         $token = (new JwtService())->issue($client);
 
         $response = $this->json('GET', $uri, [], ['authorization' => 'JWT ' . $token]);
 
         $response->assertOk()->assertJsonPath('status', 200);
+    }
+
+    /**
+     * Turn the affiliate programme on for the duration of one test.
+     *
+     * Both spellings are written: the reference installation stores the
+     * camel-cased key while this application reads the snake-cased one.
+     */
+    protected function enableAffiliateProgramme(): void
+    {
+        foreach (['affiliate_enabled', 'AffiliateEnabled'] as $setting) {
+            \Illuminate\Support\Facades\DB::table('configuration')->updateOrInsert(
+                ['setting' => $setting],
+                ['value' => '1', 'create_time' => time(), 'update_time' => time()],
+            );
+        }
+
+        \App\Models\Configuration::flushCache();
+        \App\Services\Admin\SettingService::flush();
     }
 
     public function test_an_invalid_token_is_rejected(): void
