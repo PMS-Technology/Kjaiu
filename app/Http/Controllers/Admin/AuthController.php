@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Services\Admin\AdminMeta;
 use App\Services\Admin\SettingService;
 use App\Support\ApiResponse;
+use App\Support\Captcha;
 use App\Support\PasswordHasher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -46,14 +47,50 @@ class AuthController extends AdminController
      */
     public function loginPage(Request $request)
     {
-        $captcha = SettingService::bool('admin_login_captcha', false);
+        // The original keeps this toggle in `allow_login_admin_captcha`; the
+        // client area reads the same key through `Settings`.
+        $captcha = SettingService::bool('allow_login_admin_captcha', false);
 
         return $this->ok([
             'second_verify_admin' => (string) (SettingService::value('second_verify_admin', '0') ?? '0'),
             'second_verify_action_admin' => $this->secondVerifyActions(),
+            'is_captcha' => $captcha ? 1 : 0,
             'captcha' => $captcha ? 1 : 0,
             'login_captcha' => $captcha ? 1 : 0,
         ], '请求成功');
+    }
+
+    /**
+     * `GET verify` — the login screen's graphic captcha.
+     *
+     * The original answers with PNG bytes when the captcha is enabled and with
+     * a `400` envelope when it is not, and the SPA sniffs the body to decide
+     * whether to render the field. Image bytes carry no password information, so
+     * nothing about the code is echoed back in a readable form.
+     */
+    public function verify(Request $request): \Symfony\Component\HttpFoundation\Response
+    {
+        $name = (string) $request->input('name', 'allow_login_admin_captcha');
+
+        if (! SettingService::bool($name, false)) {
+            return response()->json([
+                'status' => ApiResponse::FAIL,
+                'msg' => '未开启验证码',
+            ]);
+        }
+
+        $length = (int) (SettingService::value('captcha_length') ?: 4);
+        $code = Captcha::code($length);
+
+        $request->session()->put('captcha.' . $name, $code);
+
+        $bytes = Captcha::png($code);
+
+        return response($bytes, 200, [
+            'Content-Type' => Captcha::contentType($bytes),
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+            'Pragma' => 'no-cache',
+        ]);
     }
 
     /**
@@ -71,6 +108,10 @@ class AuthController extends AdminController
         // Client-area forms AES-encrypt the password before submit; accept
         // either that or the plain value.
         $plain = PasswordHasher::acceptedPlain($password);
+
+        if (! $this->checkLoginCaptcha($request)) {
+            return $this->fail('图形验证码错误', 400);
+        }
 
         $admin = User::query()->where('user_login', $username)->first();
 
@@ -173,6 +214,31 @@ class AuthController extends AdminController
             'is_sale' => (int) $admin->is_sale,
             'role' => $this->roleName((int) $admin->id),
         ], '请求成功');
+    }
+
+    /**
+     * Validate the login screen's graphic captcha.
+     *
+     * Returns true when the toggle is off, so a panel without a captcha keeps
+     * working unchanged. The code is single-use: it is cleared whether or not it
+     * matched, so a submitted form cannot be replayed.
+     */
+    protected function checkLoginCaptcha(Request $request): bool
+    {
+        if (! SettingService::bool('allow_login_admin_captcha', false)) {
+            return true;
+        }
+
+        $submitted = strtoupper(trim((string) $request->input('captcha', '')));
+        $expected = strtoupper((string) $request->session()->get('captcha.allow_login_admin_captcha', ''));
+
+        if ($submitted === '' || $expected === '') {
+            return false;
+        }
+
+        $request->session()->forget('captcha.allow_login_admin_captcha');
+
+        return hash_equals($expected, $submitted);
     }
 
     /**
@@ -411,23 +477,14 @@ class AuthController extends AdminController
     }
 
     /**
-     * `GET get_verify_code` — the image captcha used by the login screen.
+     * `GET get_verify_code` — legacy alias of `verify`.
+     *
+     * The original serves this path as an image too; returning the code as JSON
+     * would hand the answer to whoever asked for it.
      */
-    public function getVerifyCode(Request $request)
+    public function getVerifyCode(Request $request): \Symfony\Component\HttpFoundation\Response
     {
-        $length = (int) (SettingService::value('captcha_length') ?: 4);
-        $length = max(3, min(6, $length));
-
-        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXY3456789';
-        $code = '';
-
-        for ($i = 0; $i < $length; $i++) {
-            $code .= $alphabet[random_int(0, strlen($alphabet) - 1)];
-        }
-
-        $request->session()->put('admin_captcha', Str::upper($code));
-
-        return $this->ok(['code' => $code], '请求成功');
+        return $this->verify($request);
     }
 
     /**

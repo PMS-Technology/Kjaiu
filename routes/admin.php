@@ -50,6 +50,9 @@ Route::prefix(config('kjaiu.admin_path', 'admin'))->group(function () {
     Route::post('ad_login', [AuthController::class, 'adLogin']);
     Route::get('ad_login', [AuthController::class, 'adLoginPage']);
     Route::get('get_verify_code', [AuthController::class, 'getVerifyCode']);
+    // The login screen's graphic captcha: PNG bytes when enabled, a 400
+    // envelope when not (the SPA sniffs the body, as the original does).
+    Route::get('verify', [AuthController::class, 'verify']);
     Route::post('second_verify_send', [AuthController::class, 'secondVerifySend']);
     Route::post('second_verify_check', [AuthController::class, 'secondVerifyCheck']);
     // Logout is reachable without a session so an expired panel can still

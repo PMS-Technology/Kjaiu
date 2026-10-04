@@ -7,6 +7,7 @@
             <el-tab-pane label="充值" name="recharge" />
             <el-tab-pane label="推介" name="affiliate" />
             <el-tab-pane label="安全" name="safe" />
+            <el-tab-pane label="验证码" name="captcha" />
             <el-tab-pane label="其他" name="other" />
         </el-tabs>
 
@@ -155,8 +156,23 @@ const tabDefinitions = {
             { key: 'second_verify_home', label: '会员中心开启二次验证', type: 'switch' },
             { key: 'login_error_switch', label: '登录失败限制', type: 'switch' },
             { key: 'login_error_max_num', label: '最大登录失败次数', type: 'number' },
+        ],
+    },
+    // Captcha toggles live in their own group: `config_general/safe` does not
+    // accept these keys, so a switch placed there would silently do nothing.
+    captcha: {
+        get: 'config_general/captcha_page',
+        post: 'config_general/register_login_captcha',
+        fields: [
             { key: 'is_captcha', label: '启用图形验证码', type: 'switch' },
-            { key: 'captcha_length', label: '验证码长度', type: 'number' },
+            { key: 'captcha_length', label: '验证码长度', type: 'number', min: 3, max: 8 },
+            { key: 'allow_login_admin_captcha', label: '后台登录使用图形验证码', type: 'switch' },
+            { key: 'allow_login_email_captcha', label: '邮箱登录使用图形验证码', type: 'switch' },
+            { key: 'allow_login_phone_captcha', label: '手机号登录使用图形验证码', type: 'switch' },
+            { key: 'allow_register_email_captcha', label: '邮箱注册使用图形验证码', type: 'switch' },
+            { key: 'allow_register_phone_captcha', label: '手机号注册使用图形验证码', type: 'switch' },
+            { key: 'allow_phone_forgetpwd_captcha', label: '手机找回密码使用图形验证码', type: 'switch' },
+            { key: 'allow_email_forgetpwd_captcha', label: '邮箱找回密码使用图形验证码', type: 'switch' },
         ],
     },
     other: {

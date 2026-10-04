@@ -55,7 +55,6 @@ const loading = ref(false);
 const error = ref('');
 const captchaEnabled = ref(false);
 const captchaImage = ref('');
-const captchaId = ref('');
 
 const form = reactive({ username: '', password: '', captcha: '' });
 
@@ -64,13 +63,37 @@ const rules = {
     password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 };
 
+// The captcha endpoint answers with PNG bytes when the toggle is on and with a
+// JSON 400 envelope when it is off — the SPA sniffs the body, exactly as the
+// original does, so the setting needs no second round-trip.
+const CAPTCHA_NAME = 'allow_login_admin_captcha';
+
 const loadCaptcha = async () => {
     try {
-        const response = await client.get('captcha');
-        captchaImage.value = response.data.img || '';
-        captchaId.value = response.data.idtoken || '';
+        const response = await client.get('verify', {
+            params: { name: CAPTCHA_NAME },
+            responseType: 'arraybuffer',
+        });
+
+        const bytes = new Uint8Array(response);
+
+        // A disabled captcha arrives as the JSON envelope, not an image.
+        const head = new TextDecoder().decode(bytes.slice(0, 16));
+
+        if (head.includes('400')) {
+            captchaEnabled.value = false;
+            captchaImage.value = '';
+
+            return;
+        }
+
+        let binary = '';
+        bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+
+        captchaImage.value = `data:image/png;base64,${btoa(binary)}`;
     } catch {
         captchaEnabled.value = false;
+        captchaImage.value = '';
     }
 };
 
@@ -87,7 +110,6 @@ const submit = async () => {
             username: form.username,
             password: form.password,
             captcha: form.captcha,
-            idtoken: captchaId.value,
         });
 
         ElMessage.success('登录成功');

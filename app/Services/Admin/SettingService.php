@@ -143,8 +143,10 @@ class SettingService
             'login_register_custom_require' => 'login_register_custom_require',
         ],
         'captcha' => [
+            'is_captcha' => 'is_captcha',
             'captcha_length' => 'captcha_length',
             'captcha_combination' => 'captcha_combination',
+            'allow_login_admin_captcha' => 'allow_login_admin_captcha',
             'allow_register_email_captcha' => 'allow_register_email_captcha',
             'allow_register_phone_captcha' => 'allow_register_phone_captcha',
             'allow_login_phone_captcha' => 'allow_login_phone_captcha',
@@ -154,6 +156,9 @@ class SettingService
             'allow_phone_forgetpwd_captcha' => 'allow_phone_forgetpwd_captcha',
             'allow_email_forgetpwd_captcha' => 'allow_email_forgetpwd_captcha',
             'allow_resetpwd_captcha' => 'allow_resetpwd_captcha',
+            'allow_phone_bind_captcha' => 'allow_phone_bind_captcha',
+            'allow_email_bind_captcha' => 'allow_email_bind_captcha',
+            'allow_cancel_captcha' => 'allow_cancel_captcha',
         ],
         'secondverify' => [
             'second_verify' => 'second_verify',

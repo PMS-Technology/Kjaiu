@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use App\Models\Configuration;
+
 /**
  * Legacy-compatible password hashing.
  *
@@ -13,6 +15,48 @@ namespace App\Support;
 class PasswordHasher
 {
     public const CLIENT_PREFIX = '###';
+
+    /**
+     * Memoised `web_authcode` read from the settings table.
+     *
+     * Null until the first lookup, so a miss is not re-queried on every check.
+     */
+    protected static ?string $settingsAuthCode = null;
+
+    /**
+     * Salt used by both legacy schemes.
+     *
+     * The original keeps it in `shd_configuration.web_authcode`, not in a file
+     * this application controls, so an explicit argument or `.env` value wins
+     * and the table is only consulted when neither is set. Without this the
+     * stored hashes of an imported installation can never verify, because they
+     * were all built with that salt.
+     */
+    public static function authCode(string $explicit = ''): string
+    {
+        if ($explicit !== '') {
+            return $explicit;
+        }
+
+        $configured = (string) config('kjaiu.password.authcode', '');
+
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        if (self::$settingsAuthCode !== null) {
+            return self::$settingsAuthCode;
+        }
+
+        try {
+            self::$settingsAuthCode = (string) (Configuration::all_map()['web_authcode'] ?? '');
+        } catch (\Throwable) {
+            // No database yet (install, key:generate): behave as an empty salt.
+            self::$settingsAuthCode = '';
+        }
+
+        return self::$settingsAuthCode;
+    }
 
     /**
      * Hash an administrator password (ThinkCMF `cmf_password`).
@@ -27,7 +71,7 @@ class PasswordHasher
      */
     public static function client(string $plain, string $authCode = ''): string
     {
-        $authCode = $authCode !== '' ? $authCode : (string) config('kjaiu.password.authcode', '');
+        $authCode = self::authCode($authCode);
 
         return self::CLIENT_PREFIX . md5(md5($authCode . $plain));
     }
