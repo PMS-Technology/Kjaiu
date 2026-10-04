@@ -42,23 +42,28 @@ class PublicApiContractTest extends TestCase
 
     /**
      * Endpoints that must require a token.
+     *
+     * Each data set is a one-element array: PHPUnit passes the outer array's
+     * entries to the test method as arguments, so a bare string here is
+     * rejected as an invalid data set and the test method silently runs zero
+     * times.
      */
     public static function protectedEndpoints(): array
     {
         return [
-            'profile' => '/v1/user',
-            'security centre' => '/v1/security_info',
-            'cart' => '/v1/cart',
-            'services' => '/v1/hosts',
-            'service categories' => '/v1/hosts/cates',
-            'tickets' => '/v1/tickets',
-            'affiliate' => '/v1/affiliates',
-            'recharge info' => '/v1/funds',
-            'transactions' => '/v1/transactions/funds',
-            'messages' => '/v1/message',
-            'login log' => '/v1/log/login',
-            'system log' => '/v1/log/system',
-            'real name auth' => '/v1/real_name_auth',
+            'profile' => ['/v1/user'],
+            'security centre' => ['/v1/security_info'],
+            'cart' => ['/v1/cart'],
+            'services' => ['/v1/hosts'],
+            'service categories' => ['/v1/hosts/cates'],
+            'tickets' => ['/v1/tickets'],
+            'affiliate' => ['/v1/affiliates'],
+            'recharge info' => ['/v1/funds'],
+            'transactions' => ['/v1/transactions/funds'],
+            'messages' => ['/v1/message'],
+            'login log' => ['/v1/log/login'],
+            'system log' => ['/v1/log/system'],
+            'real name auth' => ['/v1/real_name_auth'],
         ];
     }
 

@@ -43,7 +43,9 @@ Route::prefix(config('kjaiu.admin_path', 'admin'))->group(function () {
 
     // --- Public: administrator authentication ---------------------------
     Route::get('login_page', [AuthController::class, 'loginPage']);
-    Route::get('login', [AuthController::class, 'loginPage']);
+    // `/login` is the hash route the panel switches to; direct browser hits are
+    // forwarded there so they never render the JSON envelope.
+    Route::get('login', [AuthController::class, 'loginEntry']);
     Route::post('login', [AuthController::class, 'login']);
     Route::post('ad_login', [AuthController::class, 'adLogin']);
     Route::get('ad_login', [AuthController::class, 'adLoginPage']);

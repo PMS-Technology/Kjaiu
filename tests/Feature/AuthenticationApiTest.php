@@ -100,4 +100,42 @@ class AuthenticationApiTest extends TestCase
             ->assertStatus(401)
             ->assertJsonPath('status', 401);
     }
+
+    /**
+     * The panel is hash-routed, so `/admin/login` is not a page: a browser sent
+     * there (a bookmark, or the panel's own expired-session redirect before it
+     * switched to hash navigation) must land on the in-app login route rather
+     * than on a bare JSON envelope.
+     */
+    public function test_admin_login_url_sends_a_browser_to_the_hash_route(): void
+    {
+        $this->get('/admin/login')
+            ->assertStatus(302)
+            ->assertRedirect('/admin#/login');
+    }
+
+    /**
+     * The same URL stays a JSON endpoint for the callers that treat it as one —
+     * the original platform answers `login_page` here.
+     */
+    public function test_admin_login_url_still_answers_json_to_api_callers(): void
+    {
+        $this->getJson('/admin/login')
+            ->assertOk()
+            ->assertJsonPath('status', 200)
+            ->assertJsonStructure(['status', 'msg', 'data' => ['captcha', 'login_captcha']]);
+
+        $this->getJson('/admin/login_page')
+            ->assertOk()
+            ->assertJsonPath('status', 200);
+    }
+
+    /**
+     * The SPA shell itself never requires a session — the login screen is part
+     * of the same bundle, so gating the shell would lock everyone out.
+     */
+    public function test_admin_shell_is_served_without_a_session(): void
+    {
+        $this->get('/admin')->assertOk();
+    }
 }

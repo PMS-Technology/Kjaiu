@@ -23,6 +23,25 @@ use Illuminate\Support\Str;
 class AuthController extends AdminController
 {
     /**
+     * Entry point for the panel's `/login` URL.
+     *
+     * The panel is hash-routed, so its login screen is `/admin#/login`; the
+     * JSON that screen boots from is served by `login_page`. A browser that
+     * lands on `/admin/login` — a bookmarked URL, or the old full-page redirect
+     * this endpoint used to receive — must not be shown a bare envelope, so it
+     * is sent on to the hash route. API callers (the original platform's
+     * `login_page` surface) keep getting JSON.
+     */
+    public function loginEntry(Request $request)
+    {
+        if ($request->expectsJson()) {
+            return $this->loginPage($request);
+        }
+
+        return redirect(config('kjaiu.admin_path', 'admin') . '#/login');
+    }
+
+    /**
      * Data the login screen needs before the administrator is authenticated.
      */
     public function loginPage(Request $request)
