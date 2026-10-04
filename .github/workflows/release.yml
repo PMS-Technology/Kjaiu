@@ -74,17 +74,10 @@ jobs:
       - name: Validate composer.json
         run: composer validate --strict --no-interaction
 
-      # The mirrored schema is imported rather than migrated: `database/schema`
-      # already contains every table the platform uses, including the framework
-      # ones, so running migrations on top of it would collide.
-      - name: Import schema and seed
-        run: |
-          mysql --protocol=tcp --host=127.0.0.1 --user=kjaiu --password=root kjaiu_ci < database/schema/kjaiu.sql
-          php artisan db:seed --force --no-interaction
-
-      - name: Run the suite
-        run: vendor/bin/phpunit --configuration phpunit.xml
-
+      # The assets must exist before the suite runs: the storefront layouts use
+      # `@vite`, which needs `public/build/manifest.json`, and the panel route
+      # answers 503 while `public/admin-assets/index.html` is missing. Both are
+      # ignored by git, so they are never present in a fresh checkout.
       - name: Install frontend dependencies
         run: npm ci
 
@@ -101,6 +94,17 @@ jobs:
         run: |
           test -f public/build/manifest.json
           test -f public/admin-assets/index.html
+
+      # The mirrored schema is imported rather than migrated: `database/schema`
+      # already contains every table the platform uses, including the framework
+      # ones, so running migrations on top of it would collide.
+      - name: Import schema and seed
+        run: |
+          mysql --protocol=tcp --host=127.0.0.1 --user=kjaiu --password=root kjaiu_ci < database/schema/kjaiu.sql
+          php artisan db:seed --force --no-interaction
+
+      - name: Run the suite
+        run: vendor/bin/phpunit --configuration phpunit.xml
 
   build:
     name: Build deployment archives
