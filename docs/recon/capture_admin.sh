@@ -2,7 +2,7 @@
 # Capture read-only admin GET endpoint response shapes from the original site.
 set -u
 COOKIE=/tmp/mf_admin.cookies
-OUT=/tmp/recon/api_admin
+OUT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/api_admin"
 mkdir -p "$OUT/shapes"
 BASE=https://mfcw.782778.xyz
 while IFS=$'\t' read -r rule ctrl; do

@@ -5,9 +5,10 @@ import json
 import re
 from pathlib import Path
 
-CACHE = Path('/tmp/recon/docpages')
-OUT_JSON = Path('/tmp/recon/api_v1_spec.json')
-OUT_TXT = Path('/tmp/recon/api_v1_spec.md')
+BASE_DIR = Path(__file__).resolve().parent
+CACHE = BASE_DIR / 'docpages'
+OUT_JSON = BASE_DIR / 'api_v1_spec.json'
+OUT_TXT = BASE_DIR / 'api_v1_spec.md'
 
 
 def clean(text: str) -> str:

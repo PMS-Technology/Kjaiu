@@ -120,7 +120,7 @@ bash scripts/deploy.sh            # 见下文；会同步代码并保留站点 .
   `allow_resource_api_phone`、`allow_resource_api_realname`。
 
 **当上游使用**（本站对下游开放）：下游通过 `/v1/*` 调用本站接口，全部 110 个端点见
-`/tmp/recon/api_v1_spec.json`（文档页面 `https://<站点>/document`）。下游客户端通过
+`docs/recon/api_v1_spec.json`（文档页面 `https://<站点>/document`）。下游客户端通过
 「下游管理」查看与管理，本站的 `allow_resource_api*` 设置决定其可用范围。
 
 ## 数据迁移（可选）

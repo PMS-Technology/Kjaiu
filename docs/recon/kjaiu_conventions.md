@@ -9,7 +9,7 @@ upstream/downstream API surface.
 - Working dir: `/www/Project/Kjaiu`. Deploy target: `/www/wwwroot/kjaiu.782778.xyz`
   (nginx root = `<site>/public`, PHP 8.3).
 - DB: `kjaiu_782778_xyz` / user `kjaiu_782778_xyz`. Client config for CLI SQL:
-  `mysql --defaults-extra-file=/tmp/.kjaiu.cnf -D kjaiu_782778_xyz`.
+  `mysql --defaults-extra-file=/root/.kjaiu.cnf -D kjaiu_782778_xyz`.
 - **All 163 tables already exist** in the `kjaiu_782778_xyz` database, byte-identical to the
   original's schema, with prefix `shd_` (set via `DB_PREFIX=shd_` in config/database.php).
   Baseline rows (settings, auth rules, nav, menus, currencies, ticket statuses) are
@@ -41,7 +41,7 @@ Every JSON response — API and admin — uses:
 
 ## Auth
 - Clients: `shd_clients`, guard `client`, provider `clients`.
-- Admins: `shd_user`, guard `admin`, provider `admins`, admin URL prefix `admin123`.
+- Admins: `shd_user`, guard `admin`, provider `admins`, admin URL prefix `admin` (config `KJAIU_ADMIN_PATH`).
 - Both use `App\Auth\LegacyUserProvider` + `App\Auth\LegacyHasher`.
 - Password hashes: admin = `md5($plain)`; client = `"###" . md5(md5($authCode . $plain))`
   via `App\Support\PasswordHasher`.
@@ -73,7 +73,7 @@ Every JSON response — API and admin — uses:
 ## Layout expectations
 - Client area and storefront: Blade + Tailwind, server-rendered (the original is
   ThinkPHP templates; we are free on markup but keep the same URLs and JSON endpoints).
-- Admin: JSON API under `admin123/*` + a Vue 3 + Element Plus SPA.
+- Admin: JSON API under `admin/*` (config `KJAIU_ADMIN_PATH`) + a Vue 3 + Element Plus SPA.
 - Keep the original's URL shapes where the client area uses `?action=` multiplexing
   (e.g. `/clientarea`, `/service`, `/servicedetail?id=N&action=renew`, `/billing`,
   `/cart`, `/pay`, `/login`, `/register`, `/pwreset`, `/ticket`).
@@ -83,18 +83,18 @@ Every JSON response — API and admin — uses:
   `delete_messgage` / `read_messgage`, `rebackd`.
 - Ticket statuses are rows in `shd_ticket_status` (admin-editable), not an enum.
 - Client-area routes carry no CSRF middleware; admin routes do.
-- `/v1` endpoint list and field-level spec: `/tmp/recon/api_v1_spec.json` (110 endpoints)
-  and `/tmp/recon/api_v1_spec.md`.
+- `/v1` endpoint list and field-level spec: `docs/recon/api_v1_spec.json` (110 endpoints)
+  and `docs/recon/api_v1_spec.md`.
 
 ## Recon references (already written, read these)
-- `/tmp/recon/clientarea.md` — 1,104-line client-area spec (routes, templates, fields,
+- `docs/recon/clientarea.md` — 1,104-line client-area spec (routes, templates, fields,
   AJAX endpoints, enums with Chinese labels, assets).
-- `/tmp/recon/admin.md` — ~106KB admin spec (menu → SPA route → chunk → API map, every
+- `docs/recon/admin.md` — ~106KB admin spec (menu → SPA route → chunk → API map, every
   form's field names, the 上下游/upstream section in depth).
-- `/tmp/recon/routes.tsv` — all 1,665 original routes: `method \t rule \t controller/action \t options`.
-- `/tmp/recon/columns.txt` — every table's columns.
-- `/tmp/recon/schema_install.md` — schema with column comments.
-- `/tmp/recon/api_v1_spec.json` — parsed /v1 docs (request + response fields per endpoint).
+- `docs/recon/routes.tsv` — all 1,665 original routes: `method \t rule \t controller/action \t options`.
+- `docs/recon/columns.txt` — every table's columns.
+- `docs/recon/schema_install.md` — schema with column comments.
+- `docs/recon/api_v1_spec.json` — parsed /v1 docs (request + response fields per endpoint).
 
 ## Rules
 - Run `php -l` on every file you write, and `php artisan route:list` after touching routes.

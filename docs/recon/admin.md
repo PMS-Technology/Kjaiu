@@ -1,8 +1,8 @@
 # 智简魔方财务 (ZJMF / IDCSmart finance) v3.7.6 — Admin Panel Reverse-Engineering Spec
 
 Source of truth: the compiled admin SPA under `/www/wwwroot/mfcw.782778.xyz/public/admin123/`
-(read-only), cross-checked against `/tmp/recon/routes.tsv`, `/tmp/recon/admin_menu.txt`
-and `/tmp/recon/schema_install.md`. Nothing here was verified by calling the live API.
+(read-only), cross-checked against `docs/recon/routes.tsv`, `docs/recon/admin_menu.txt`
+and `docs/recon/schema_install.md`. Nothing here was verified by calling the live API.
 
 ---
 
@@ -1670,7 +1670,7 @@ The same page also exists as `/source-api` (`SourceApi`, module `e485`) with the
 
 #### 6.8.3 The downstream/upstream API endpoints themselves (`admin/zjmfFinanceApi/*`)
 
-From `/tmp/recon/routes.tsv` (controller `admin/zjmfFinanceApi`). These are the endpoints
+From `docs/recon/routes.tsv` (controller `admin/zjmfFinanceApi`). These are the endpoints
 the panel calls **and** the ones a downstream install calls:
 
 | method | url | controller action | purpose |
@@ -1785,7 +1785,7 @@ Also reachable as `/base-info` (`BaseInfo`, module `323d`), `/official-setting`
 | GET | `common` | platform info (company name, license, language list) |
 
 All settings live in `shd_configuration` (`setting`, `value`, timestamps) —
-see `/tmp/recon/config_defaults.sql` for the shipped defaults.
+see `docs/recon/config_defaults.sql` for the shipped defaults.
 
 ### 7.2 定时任务 — `/automatic-tasks` (`AutomaticTasks`, module `f4f4`)
 
@@ -2013,7 +2013,7 @@ type, activeid, usertype`.
 ### Appendix — extraction tooling
 
 The SPA was reconstructed by evaluating the webpack chunks in a Node `vm` context
-(`/tmp/recon/work/`): `load.js` captures every module, `page.js` prints an annotated,
+(`docs/recon/work/`): `load.js` captures every module, `page.js` prints an annotated,
 beautified dump per route (with `$lang` keys resolved from `lang/zh.js` and API calls
 rewritten to `API_<METHOD>(<url>)`), `struct.js` extracts tables/columns/forms,
 `mod.js` prints `data()`/`methods`, and `endpoints.tsv` is the full 4,221-row

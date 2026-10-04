@@ -7,11 +7,12 @@ import sys
 from pathlib import Path
 
 BASE = 'https://mfcw.782778.xyz/document'
-OUT = Path('/tmp/recon/api_v1_spec.txt')
-CACHE = Path('/tmp/recon/docpages')
+BASE_DIR = Path(__file__).resolve().parent
+OUT = BASE_DIR / 'api_v1_spec.txt'
+CACHE = BASE_DIR / 'docpages'
 CACHE.mkdir(parents=True, exist_ok=True)
 
-links = [line.strip() for line in Path('/tmp/recon/doc_links.txt').read_text().splitlines() if line.strip()]
+links = [line.strip() for line in (BASE_DIR / 'doc_links.txt').read_text().splitlines() if line.strip()]
 
 
 def fetch(query):

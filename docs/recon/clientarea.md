@@ -1,7 +1,7 @@
 # 智简魔方财务 (ZJMF / IDCSmart Finance) v3.7.6 — Client Area Spec
 
 Source of truth: live templates at `/www/wwwroot/mfcw.782778.xyz/public/themes/clientarea/default/`
-and `/www/wwwroot/mfcw.782778.xyz/public/themes/cart/default/`, route table `/tmp/recon/routes.tsv`,
+and `/www/wwwroot/mfcw.782778.xyz/public/themes/cart/default/`, route table `docs/recon/routes.tsv`,
 language pack `/www/wwwroot/mfcw.782778.xyz/public/language/chinese.php`.
 
 Original stack: ThinkPHP 5.1, ionCube-encrypted `app/`. Controllers relevant to the client area live in
